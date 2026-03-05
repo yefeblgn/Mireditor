@@ -1,34 +1,68 @@
 {
   "name": "mireditor",
-  "version": "1.0.0",
-  "main": "index.ts",
+  "version": "0.0.1",
+  "main": "main.electron.js",
+  "author": "Efe Bilgin",
+  "description": "Mireditor - Graphics Engine",
   "scripts": {
-    "start": "expo start",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
-    "web": "expo start --web"
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "electron": "npx electron .",
+    "backend": "cd ../backend && python -m uvicorn main:app --reload --port 8000",
+    "dev-desktop": "concurrently -n BACK,VITE,ELEC -c blue,green,magenta \"cd ../backend && python -m uvicorn main:app --reload --port 8000\" \"vite --port 5173\" \"npx wait-on http://localhost:5173 http-get://localhost:8000/health && npx electron .\"",
+    "build-exe": "vite build && electron-builder --win --x64"
+  },
+  "build": {
+    "appId": "com.mireditor.app",
+    "productName": "Mireditor",
+    "directories": {
+      "output": "build-output"
+    },
+    "files": [
+      "dist/**/*",
+      "main.electron.js",
+      "preload-splash.js",
+      "splash.html",
+      "assets/**/*",
+      "package.json"
+    ],
+    "extraFiles": [],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "assets/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
   },
   "dependencies": {
-    "@expo/metro-runtime": "~55.0.6",
-    "@react-navigation/native": "^7.1.33",
-    "@react-navigation/native-stack": "^7.14.4",
-    "babel-preset-expo": "^55.0.10",
-    "expo": "~55.0.4",
-    "expo-status-bar": "~55.0.4",
-    "nativewind": "^4.2.2",
+    "axios": "^1.13.6",
     "react": "19.2.0",
     "react-dom": "19.2.0",
-    "react-native": "0.83.2",
-    "react-native-css-interop": "^0.2.2",
-    "react-native-reanimated": "4.2.1",
-    "react-native-safe-area-context": "~5.6.2",
-    "react-native-screens": "~4.23.0",
-    "react-native-web": "^0.21.0",
-    "tailwindcss": "^3.3.2"
+    "zustand": "^5.0.11"
   },
   "devDependencies": {
     "@types/react": "~19.2.2",
-    "typescript": "~5.9.2"
+    "@vitejs/plugin-react": "^5.1.4",
+    "autoprefixer": "^10.4.27",
+    "concurrently": "^9.2.1",
+    "electron": "^40.7.0",
+    "electron-builder": "^26.8.1",
+    "postcss": "^8.5.8",
+    "tailwindcss": "^3.4.19",
+    "typescript": "~5.9.2",
+    "vite": "^7.3.1",
+    "wait-on": "^9.0.4"
   },
   "private": true
 }

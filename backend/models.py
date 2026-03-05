@@ -38,10 +38,11 @@ class AiUsageLog(Base):
 
 class AppUpdate(Base):
     __tablename__ = "app_updates"
-    id = Column(Integer, primary_key=True, index=True)
-    version = Column(String(50), unique=True, index=True)
-    release_date = Column(DateTime, default=datetime.utcnow)
-    is_critical = Column(Boolean, default=False)
-    download_url_win = Column(String(500))
+    update_id = Column(Integer, primary_key=True, autoincrement=True)
+    version_number = Column(String(50), unique=True, index=True, nullable=False)
+    platform = Column(String(50), default="windows")
+    download_url = Column(String(500))
     release_notes = Column(Text)
+    is_critical = Column(Boolean, default=False)
+    release_date = Column(DateTime, default=datetime.utcnow)
 

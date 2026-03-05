@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mireditor</title>
+    <style>
+        @font-face {
+            font-family: 'LEMON MILK';
+            font-weight: 400;
+            src: url('./src/fonts/LemonMilk-Regular.woff') format('woff');
+        }
+        @font-face {
+            font-family: 'LEMON MILK';
+            font-weight: 300;
+            src: url('./src/fonts/LemonMilk-Light.woff') format('woff');
+        }
+        @font-face {
+            font-family: 'LEMON MILK';
+            font-weight: 500;
+            src: url('./src/fonts/LemonMilk-Medium.woff') format('woff');
+        }
+        @font-face {
+            font-family: 'LEMON MILK';
+            font-weight: 700;
+            src: url('./src/fonts/LemonMilk-Bold.woff') format('woff');
+        }
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: #0f0f0f;
+            font-family: 'LEMON MILK', sans-serif;
+        }
+        .main-wrapper {
+            width: 100%;
+            height: 100%;
+            background: #0f0f0f;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            -webkit-app-region: drag;
+            position: relative;
+        }
+        .container {
+            text-align: center;
+            width: 80%;
+            max-width: 340px;
+        }
+        .logo-container {
+            width: 130px;
+            height: 130px;
+            margin: 0 auto 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .logo {
+            width: 110px;
+            height: 110px;
+            animation: logo-spin 3.5s cubic-bezier(0.68, -0.55, 0.27, 1.55) infinite;
+            background-image: url('assets/icon-nobg.png');
+            background-size: contain;
+            background-repeat: no-repeat;
+            background-position: center;
+        }
+
+        @keyframes logo-spin {
+            0% { transform: rotate(0deg); }
+            35% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .app-name {
+            color: #fff;
+            font-size: 16px;
+            font-weight: 700;
+            letter-spacing: 6px;
+            text-transform: uppercase;
+            margin-bottom: 20px;
+        }
+
+        /* ─── Tek satır status ─── */
+        .status-text {
+            color: #555;
+            font-size: 9px;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            font-weight: 400;
+            margin-bottom: 14px;
+            height: 14px;
+            transition: opacity 0.3s ease;
+        }
+        .status-text.fade {
+            opacity: 0;
+        }
+
+        /* ─── Progress bar ─── */
+        .progress-container {
+            width: 100%;
+            height: 2px;
+            background: #1a1a1a;
+            border-radius: 2px;
+            overflow: hidden;
+        }
+        .progress-bar {
+            width: 0%;
+            height: 100%;
+            background: linear-gradient(90deg, #3b82f6, #60a5fa);
+            box-shadow: 0 0 10px rgba(59,130,246,0.4);
+            transition: width 0.5s cubic-bezier(0.1, 0.7, 0.1, 1);
+        }
+        .progress-bar.complete {
+            background: linear-gradient(90deg, #22c55e, #4ade80);
+            box-shadow: 0 0 10px rgba(34,197,94,0.4);
+        }
+
+        .version {
+            position: absolute;
+            bottom: 14px;
+            color: #2a2a2a;
+            font-size: 8px;
+            letter-spacing: 2px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+    </style>
+</head>
+<body>
+    <div class="main-wrapper">
+        <div class="container">
+            <div class="logo-container">
+                <div class="logo"></div>
+            </div>
+            <div class="app-name">Mireditor</div>
+            <div class="status-text" id="status">Başlatılıyor...</div>
+            <div class="progress-container">
+                <div class="progress-bar" id="bar"></div>
+            </div>
+        </div>
+        <div class="version">v0.0.1</div>
+    </div>
+
+    <script>
+        const statusEl = document.getElementById('status');
+        const progressBar = document.getElementById('bar');
+
+        function setStatus(text) {
+            statusEl.classList.add('fade');
+            setTimeout(() => {
+                statusEl.textContent = text;
+                statusEl.classList.remove('fade');
+            }, 150);
+        }
+
+        function setProgress(percent) {
+            progressBar.style.width = percent + '%';
+            if (percent >= 100) {
+                progressBar.classList.add('complete');
+            }
+        }
+
+        if (window.splashAPI) {
+            window.splashAPI.onStatus((data) => {
+                setStatus(data.text);
+            });
+            window.splashAPI.onProgress((data) => {
+                setProgress(data.percent);
+            });
+            window.splashAPI.onReady(() => {
+                setStatus('Hazır');
+                setProgress(100);
+            });
+        } else {
+            let p = 0;
+            const interval = setInterval(() => {
+                p += 0.4;
+                setProgress(Math.min(p, 95));
+                if (p >= 95) clearInterval(interval);
+            }, 30);
+        }
+    </script>
+</body>
+</html>

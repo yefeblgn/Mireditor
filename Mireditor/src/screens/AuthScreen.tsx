@@ -35,10 +35,10 @@ export default function AuthScreen() {
         <View className="bg-[#181825] p-6 rounded-2xl shadow-sm border border-[#313244]">
           {!isLogin && (
             <View className="mb-4">
-              <Text className="text-[#cdd6f4] mb-2 font-semibold">Ad Soyad</Text>
+              <Text className="text-[#cdd6f4] mb-2 font-semibold">Kullanıcı adı</Text>
               <TextInput
                 className="bg-[#11111b] h-12 rounded-lg px-4 text-[#cdd6f4] border border-[#313244]"
-                placeholder="Örn: Efe Bilgin"
+                placeholder="Kullanıcı adı giriniz..."
                 placeholderTextColor="#6c7086"
                 value={registerName}
                 onChangeText={setRegisterName}
