@@ -1,14 +1,18 @@
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 from sqlalchemy import text, select
+from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from database import engine, Base, get_db
 from models import User, Draft, AppUpdate
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 from packaging import version as pkg_version
 import hashlib
 import secrets
+import logging
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Mireditor API", version="1.0.0")
 
@@ -16,65 +20,56 @@ class LoginRequest(BaseModel):
     username: str
     password: str
 
+
 class RegisterRequest(BaseModel):
-    full_name: str
+    username: str
     email: str
     password: str
 
-# Basit password hash (prod'da bcrypt/argon2 kullan)
+
 def hash_password(password: str) -> str:
-    salt = secrets.token_hex(16)
-    h = hashlib.sha256((salt + password).encode()).hexdigest()
-    return f"{salt}:{h}"
+    return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
-def verify_password(password: str, hashed: str) -> bool:
-    try:
-        salt, h = hashed.split(":")
-        return hashlib.sha256((salt + password).encode()).hexdigest() == h
-    except Exception:
-        return False
 
-# CORS (Frontend ile Backend haberleşmesi için)
+def verify_password(plain_password: str, password_hash: str) -> bool:
+    return hash_password(plain_password) == password_hash
+
+# CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # Prod'da domainleri belirle
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 @app.on_event("startup")
-async def startup():
-    async with engine.begin() as conn:
-        # Uyarı: Prod'da tabloları Alembic ile yönetin, create_all tehlikelidir
-        await conn.run_sync(Base.metadata.create_all)
+def startup():
+    # Sync create_all
+    Base.metadata.create_all(bind=engine)
 
 @app.get("/")
-async def root():
+def root():
     return {"message": "Mireditor Core API Çalışıyor. C# & React Native için hazır."}
 
 @app.post("/login")
-async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
-    # Önce DB'den kullanıcı ara (email veya full_name ile)
-    result = await db.execute(
-        select(User).where(
-            (User.email == request.username) | (User.full_name == request.username)
-        )
-    )
-    user = result.scalar_one_or_none()
+def login(request: LoginRequest, db: Session = Depends(get_db)):
+    user = db.query(User).filter(
+        (User.email == request.username) | (User.username == request.username)
+    ).first()
 
     if user and verify_password(request.password, user.password_hash):
         return {
-            "token": f"mireditor_jwt_{user.id}_{secrets.token_hex(16)}",
+            "token": f"mireditor_jwt_{user.user_id}_{secrets.token_hex(16)}",
             "user": {
-                "id": user.id,
-                "username": user.full_name,
+                "id": user.user_id,
+                "username": user.username,
                 "email": user.email,
                 "role": "poweruser"
             }
         }
 
-    # Fallback: Mock login (admin/123) — geliştirme kolaylığı
+    # Fallback: Mock login (admin/123)
     if request.username == "admin" and request.password == "123":
         return {
             "token": "mireditor_premium_jwt_token_2026",
@@ -87,62 +82,76 @@ async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
     )
 
 @app.post("/register")
-async def register(request: RegisterRequest, db: AsyncSession = Depends(get_db)):
-    # Validasyon
-    if len(request.full_name.strip()) < 2:
-        raise HTTPException(status_code=422, detail="Ad soyad en az 2 karakter olmalıdır.")
+def register(request: RegisterRequest, db: Session = Depends(get_db)):
+    if len(request.username.strip()) < 2:
+        raise HTTPException(status_code=422, detail="Kullanıcı adı en az 2 karakter olmalıdır.")
     if len(request.password) < 6:
         raise HTTPException(status_code=422, detail="Şifre en az 6 karakter olmalıdır.")
 
-    # Email unique kontrolü
-    result = await db.execute(
-        select(User).where(User.email == request.email.strip().lower())
-    )
-    existing = result.scalar_one_or_none()
-    if existing:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Bu email adresi zaten kayıtlı."
-        )
+    email_lower = request.email.strip().lower()
+    username_clean = request.username.strip()
 
-    # Yeni kullanıcı oluştur
+    # Email veya username unique kontrolü
+    existing = db.query(User).filter(
+        (User.email == email_lower) | (User.username == username_clean)
+    ).first()
+    if existing:
+        if existing.email == email_lower:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Bu email adresi zaten kayıtlı.")
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Bu kullanıcı adı zaten alınmış.")
+
     new_user = User(
-        full_name=request.full_name.strip(),
-        email=request.email.strip().lower(),
+        username=username_clean,
+        email=email_lower,
         password_hash=hash_password(request.password),
     )
     db.add(new_user)
-    await db.commit()
-    await db.refresh(new_user)
+    try:
+        db.commit()
+        db.refresh(new_user)
+    except OperationalError as e:
+        logger.error(f"DB OperationalError on register: {e}")
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Veritabani baglantisi gecici olarak kesildi. Lutfen tekrar deneyin."
+        )
+    except SQLAlchemyError as e:
+        logger.error(f"DB error on register: {e}")
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Veritabani islemi sirasinda bir hata olustu."
+        )
 
     return {
         "message": "Kayıt başarılı",
         "user": {
-            "id": new_user.id,
-            "full_name": new_user.full_name,
+            "id": new_user.user_id,
+            "username": new_user.username,
             "email": new_user.email,
         }
     }
 
 @app.get("/health")
-async def health_check(db: AsyncSession = Depends(get_db)):
+def health_check(db: Session = Depends(get_db)):
     try:
-        await db.execute(text("SELECT 1"))
-        return {"status": "ok", "database": "Bağlantı Başarılı (Async)"}
+        db.execute(text("SELECT 1"))
+        return {"status": "ok", "database": "Baglanti Basarili"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
 # ─── Auto Update Check ───
 @app.get("/check-update")
-async def check_update(
+def check_update(
     current_version: str = "0.0.1",
     platform: str = "windows",
-    db: AsyncSession = Depends(get_db),
+    db: Session = Depends(get_db),
 ):
     """Mevcut sürümü kontrol et, yeni sürüm varsa bildir."""
     try:
         # En son sürümü bul (release_date'e göre en yeni)
-        result = await db.execute(
+        result = db.execute(
             select(AppUpdate)
             .where(AppUpdate.platform == platform)
             .order_by(AppUpdate.release_date.desc())
@@ -190,22 +199,19 @@ async def check_update(
 
 
 @app.get("/drafts/{user_id}")
-async def get_user_drafts(user_id: int, db: AsyncSession = Depends(get_db)):
+def get_user_drafts(user_id: int, db: Session = Depends(get_db)):
     """Kullanıcının taslak/projelerini getir"""
-    result = await db.execute(
-        select(Draft).where(Draft.user_id == user_id).order_by(Draft.created_at.desc())
-    )
-    drafts = result.scalars().all()
+    drafts = db.query(Draft).filter(Draft.user_id == user_id).order_by(Draft.last_modified.desc()).all()
 
     return {
         "drafts": [
             {
-                "id": d.id,
-                "file_name": d.file_name,
-                "file_url": d.file_url,
+                "id": d.draft_id,
+                "title": d.title,
+                "file_path": d.file_path,
                 "file_size_kb": d.file_size_kb,
-                "created_at": d.created_at.isoformat() if d.created_at else None,
-                "color": "#3b82f6"
+                "last_modified": d.last_modified.isoformat() if d.last_modified else None,
+                "is_cloud_synced": d.is_cloud_synced,
             }
             for d in drafts
         ]

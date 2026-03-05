@@ -173,7 +173,7 @@ export function AuthPage({ onSuccess }: AuthPageProps) {
 
     try {
       await axios.post(`${API_URL}/register`, {
-        full_name: fullName.trim(),
+        username: fullName.trim(),
         email: email.trim(),
         password: password.trim(),
       });

@@ -9,7 +9,7 @@ app.commandLine.appendSwitch('no-sandbox');
 
 // ─── Config ───
 const VITE_URL = 'http://localhost:5173';
-const API_URL = 'http://localhost:8000';
+const API_URL = app.isPackaged ? 'https://manici.yefeblgn.net/mireditor/api' : 'http://localhost:8000';
 const RETRY_DELAYS = [4, 8, 12, 16, 20, 24, 28, 32, 36]; // saniye
 const APP_VERSION = '0.0.1';
 

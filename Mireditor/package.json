@@ -11,39 +11,7 @@
     "electron": "npx electron .",
     "backend": "cd ../backend && python -m uvicorn main:app --reload --port 8000",
     "dev-desktop": "concurrently -n BACK,VITE,ELEC -c blue,green,magenta \"cd ../backend && python -m uvicorn main:app --reload --port 8000\" \"vite --port 5173\" \"npx wait-on http://localhost:5173 http-get://localhost:8000/health && npx electron .\"",
-    "build-exe": "vite build && electron-builder --win --x64"
-  },
-  "build": {
-    "appId": "com.mireditor.app",
-    "productName": "Mireditor",
-    "directories": {
-      "output": "build-output"
-    },
-    "files": [
-      "dist/**/*",
-      "main.electron.js",
-      "preload-splash.js",
-      "splash.html",
-      "assets/**/*",
-      "package.json"
-    ],
-    "extraFiles": [],
-    "win": {
-      "target": [
-        {
-          "target": "nsis",
-          "arch": ["x64"]
-        }
-      ],
-      "icon": "assets/icon.png"
-    },
-    "nsis": {
-      "oneClick": false,
-      "perMachine": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true
-    }
+    "build-exe": "vite build && electron-builder --win --x64 --config electron-builder.json"
   },
   "dependencies": {
     "axios": "^1.13.6",
@@ -63,6 +31,5 @@
     "typescript": "~5.9.2",
     "vite": "^7.3.1",
     "wait-on": "^9.0.4"
-  },
-  "private": true
+  }
 }
