@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { useAuthStore } from '../store/useAuthStore';
+import { NewProjectModal } from '../components/editor/Modals';
+import { ProjectConfig } from '../store/useEditorStore';
 
 const API_URL = 'https://manici.yefeblgn.net/mireditor/api';
 
@@ -9,7 +11,7 @@ const ipcRenderer = typeof window !== 'undefined' && (window as any).require
   : null;
 
 interface DashboardPageProps {
-  onOpenEditor: () => void;
+  onOpenEditor: (config?: ProjectConfig, filePath?: string) => void;
 }
 
 interface ProjectItem {
@@ -19,6 +21,14 @@ interface ProjectItem {
   file_size_kb: number;
   last_modified: string;
   is_cloud_synced: boolean;
+}
+
+interface LocalDraft {
+  fileName: string;
+  filePath: string;
+  title: string;
+  lastModified: string;
+  sizeKB: number;
 }
 
 function formatDate(iso: string): string {
@@ -205,10 +215,14 @@ export function DashboardPage({ onOpenEditor }: DashboardPageProps) {
   const { user, logout } = useAuthStore();
   const [menuOpen, setMenuOpen] = useState(false);
   const [projects, setProjects] = useState<ProjectItem[]>([]);
+  const [localDrafts, setLocalDrafts] = useState<LocalDraft[]>([]);
   const [loadingProjects, setLoadingProjects] = useState(true);
+  const [loadingLocal, setLoadingLocal] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [showSettings, setShowSettings] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
+  const [showNewProject, setShowNewProject] = useState(false);
+  const [activeTab, setActiveTab] = useState<'local' | 'cloud'>('local');
   const menuRef = useRef<HTMLDivElement>(null);
 
   // Click outside → menü kapat
@@ -223,6 +237,25 @@ export function DashboardPage({ onOpenEditor }: DashboardPageProps) {
       return () => document.removeEventListener('mousedown', handler);
     }
   }, [menuOpen]);
+
+  // Fetch local drafts
+  const fetchLocalDrafts = async () => {
+    if (!ipcRenderer) { setLoadingLocal(false); return; }
+    setLoadingLocal(true);
+    try {
+      const drafts = await ipcRenderer.invoke('list-local-drafts');
+      setLocalDrafts(drafts || []);
+    } catch (err) {
+      console.error('Local drafts error:', err);
+      setLocalDrafts([]);
+    } finally {
+      setLoadingLocal(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchLocalDrafts();
+  }, []);
 
   // API'den projeleri çek
   useEffect(() => {
@@ -242,16 +275,56 @@ export function DashboardPage({ onOpenEditor }: DashboardPageProps) {
     fetchDrafts();
   }, [user?.id]);
 
+  // Open a .gef file — reads it and extracts config, passes filePath to editor
   const handleOpenFile = async () => {
-    if (ipcRenderer) {
-      const filePath = await ipcRenderer.invoke('open-file-dialog');
-      if (filePath) {
-        onOpenEditor();
-      }
-    } else {
-      onOpenEditor();
+    if (!ipcRenderer) { onOpenEditor(); return; }
+    const filePath = await ipcRenderer.invoke('open-file-dialog');
+    if (!filePath) return;
+    try {
+      const raw = await ipcRenderer.invoke('read-file', { filePath });
+      if (!raw) { onOpenEditor(undefined, filePath); return; }
+      const draft = JSON.parse(raw);
+      const config: ProjectConfig = {
+        title: draft.title || 'Untitled',
+        width: draft.width || 1920,
+        height: draft.height || 1080,
+        backgroundColor: draft.canvas?.background || '#ffffff',
+      };
+      onOpenEditor(config, filePath);
+    } catch {
+      onOpenEditor(undefined, filePath);
     }
   };
+
+  // Open a local draft by path
+  const handleOpenLocalDraft = async (filePath: string) => {
+    if (!ipcRenderer) return;
+    try {
+      const raw = await ipcRenderer.invoke('read-file', { filePath });
+      if (!raw) return;
+      const draft = JSON.parse(raw);
+      const config: ProjectConfig = {
+        title: draft.title || 'Untitled',
+        width: draft.width || 1920,
+        height: draft.height || 1080,
+        backgroundColor: draft.canvas?.background || '#ffffff',
+      };
+      onOpenEditor(config, filePath);
+    } catch (err) {
+      console.error('Open draft error:', err);
+    }
+  };
+
+  // Delete a local draft
+  const handleDeleteDraft = async (filePath: string) => {
+    if (!ipcRenderer) return;
+    await ipcRenderer.invoke('delete-local-draft', { filePath });
+    fetchLocalDrafts();
+  };
+
+  const filteredLocal = localDrafts.filter(d =>
+    d.title.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
   const filteredProjects = projects.filter(p =>
     p.title.toLowerCase().includes(searchQuery.toLowerCase())
@@ -262,6 +335,15 @@ export function DashboardPage({ onOpenEditor }: DashboardPageProps) {
       {/* Modals */}
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
       {showProfile && <ProfileModal onClose={() => setShowProfile(false)} user={user} />}
+      {showNewProject && (
+        <NewProjectModal
+          onClose={() => setShowNewProject(false)}
+          onCreate={(config) => {
+            setShowNewProject(false);
+            onOpenEditor(config);
+          }}
+        />
+      )}
 
       {/* LEFT SIDE - Son Projeler */}
       <div className="flex-1 flex flex-col overflow-hidden">
@@ -324,7 +406,7 @@ export function DashboardPage({ onOpenEditor }: DashboardPageProps) {
           <p className="text-[#444] text-xs mb-6">Bir proje açın veya yeni bir tane oluşturun.</p>
 
           {/* Search */}
-          <div className="mb-6">
+          <div className="mb-4">
             <input
               type="text"
               placeholder="Projelerde ara..."
@@ -334,49 +416,124 @@ export function DashboardPage({ onOpenEditor }: DashboardPageProps) {
             />
           </div>
 
-          {/* Section header */}
-          <p className="text-[#555] text-[10px] font-bold uppercase tracking-[2px] mb-4">Son Projeler</p>
-
-          {/* Project list */}
-          <div className="space-y-1">
-            {loadingProjects ? (
-              Array.from({ length: 4 }).map((_, i) => (
-                <div key={i} className="flex items-center gap-4 p-3 rounded-lg animate-pulse">
-                  <div className="w-10 h-10 rounded-lg bg-[#1a1a1a] flex-shrink-0" />
-                  <div className="flex-1">
-                    <div className="h-3 w-40 bg-[#1a1a1a] rounded mb-2" />
-                    <div className="h-2 w-56 bg-[#141414] rounded" />
-                  </div>
-                </div>
-              ))
-            ) : filteredProjects.length === 0 ? (
-              <div className="text-center py-16">
-                <p className="text-[#444] text-sm">{searchQuery ? 'Arama sonucu bulunamadı.' : 'Henüz proje yok.'}</p>
-                <p className="text-[#333] text-[10px] mt-1">Yeni bir proje oluşturmak için sağdaki menüyü kullanın.</p>
-              </div>
-            ) : (
-              filteredProjects.map((project) => (
-                <button
-                  key={project.id}
-                  onClick={onOpenEditor}
-                  className="w-full flex items-center gap-4 p-3 rounded-lg hover:bg-[#161616] transition-colors group text-left"
-                >
-                  <div
-                    className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 text-white text-sm font-bold bg-[#3b82f6]">
-                    {project.title[0]}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-[#ddd] text-sm font-medium group-hover:text-white transition-colors truncate">{project.title}</p>
-                    <p className="text-[#444] text-[10px] truncate">{project.file_path}</p>
-                  </div>
-                  <div className="flex flex-col items-end flex-shrink-0">
-                    <span className="text-[#444] text-[10px]">{formatDate(project.last_modified)}</span>
-                    {project.is_cloud_synced && <span className="text-blue-400 text-[9px]">☁ Synced</span>}
-                  </div>
-                </button>
-              ))
-            )}
+          {/* Tabs: Local / Cloud */}
+          <div className="flex gap-1 mb-4 border-b border-[#222]">
+            <button
+              onClick={() => setActiveTab('local')}
+              className={`px-4 py-2 text-xs font-medium transition-colors border-b-2 -mb-px ${
+                activeTab === 'local'
+                  ? 'text-blue-400 border-blue-400'
+                  : 'text-[#666] border-transparent hover:text-[#aaa]'
+              }`}
+            >
+              💾 Yerel Taslaklar {!loadingLocal && `(${filteredLocal.length})`}
+            </button>
+            <button
+              onClick={() => setActiveTab('cloud')}
+              className={`px-4 py-2 text-xs font-medium transition-colors border-b-2 -mb-px ${
+                activeTab === 'cloud'
+                  ? 'text-blue-400 border-blue-400'
+                  : 'text-[#666] border-transparent hover:text-[#aaa]'
+              }`}
+            >
+              ☁ Bulut Projeleri {!loadingProjects && `(${filteredProjects.length})`}
+            </button>
           </div>
+
+          {/* Local drafts list */}
+          {activeTab === 'local' && (
+            <div className="space-y-1">
+              {loadingLocal ? (
+                Array.from({ length: 3 }).map((_, i) => (
+                  <div key={i} className="flex items-center gap-4 p-3 rounded-lg animate-pulse">
+                    <div className="w-10 h-10 rounded-lg bg-[#1a1a1a] flex-shrink-0" />
+                    <div className="flex-1">
+                      <div className="h-3 w-40 bg-[#1a1a1a] rounded mb-2" />
+                      <div className="h-2 w-56 bg-[#141414] rounded" />
+                    </div>
+                  </div>
+                ))
+              ) : filteredLocal.length === 0 ? (
+                <div className="text-center py-16">
+                  <p className="text-[#444] text-sm">{searchQuery ? 'Arama sonucu bulunamadı.' : 'Henüz yerel taslak yok.'}</p>
+                  <p className="text-[#333] text-[10px] mt-1">Editörde Ctrl+S ile kaydedin, otomatik olarak burada görünür.</p>
+                </div>
+              ) : (
+                filteredLocal.map((draft) => (
+                  <div
+                    key={draft.filePath}
+                    className="w-full flex items-center gap-4 p-3 rounded-lg hover:bg-[#161616] transition-colors group text-left"
+                  >
+                    <button
+                      onClick={() => handleOpenLocalDraft(draft.filePath)}
+                      className="flex-1 flex items-center gap-4 min-w-0"
+                    >
+                      <div className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 text-white text-sm font-bold bg-gradient-to-br from-[#3b82f6] to-[#6366f1]">
+                        {draft.title[0]?.toUpperCase() || 'M'}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[#ddd] text-sm font-medium group-hover:text-white transition-colors truncate">{draft.title}</p>
+                        <p className="text-[#444] text-[10px] truncate">{draft.fileName} · {draft.sizeKB} KB</p>
+                      </div>
+                      <div className="flex flex-col items-end flex-shrink-0">
+                        <span className="text-[#444] text-[10px]">{formatDate(draft.lastModified)}</span>
+                        <span className="text-[#333] text-[9px]">Yerel</span>
+                      </div>
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleDeleteDraft(draft.filePath); }}
+                      className="p-1.5 text-[#444] hover:text-red-400 hover:bg-red-500/10 rounded transition-colors opacity-0 group-hover:opacity-100"
+                      title="Sil"
+                    >
+                      {Icons.close}
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+
+          {/* Cloud projects list */}
+          {activeTab === 'cloud' && (
+            <div className="space-y-1">
+              {loadingProjects ? (
+                Array.from({ length: 4 }).map((_, i) => (
+                  <div key={i} className="flex items-center gap-4 p-3 rounded-lg animate-pulse">
+                    <div className="w-10 h-10 rounded-lg bg-[#1a1a1a] flex-shrink-0" />
+                    <div className="flex-1">
+                      <div className="h-3 w-40 bg-[#1a1a1a] rounded mb-2" />
+                      <div className="h-2 w-56 bg-[#141414] rounded" />
+                    </div>
+                  </div>
+                ))
+              ) : filteredProjects.length === 0 ? (
+                <div className="text-center py-16">
+                  <p className="text-[#444] text-sm">{searchQuery ? 'Arama sonucu bulunamadı.' : 'Henüz bulut projesi yok.'}</p>
+                  <p className="text-[#333] text-[10px] mt-1">Editörde Dosya → Buluta Kaydet ile yükleyin.</p>
+                </div>
+              ) : (
+                filteredProjects.map((project) => (
+                  <button
+                    key={project.id}
+                    onClick={() => onOpenEditor({ title: project.title, width: 1920, height: 1080, backgroundColor: '#ffffff' })}
+                    className="w-full flex items-center gap-4 p-3 rounded-lg hover:bg-[#161616] transition-colors group text-left"
+                  >
+                    <div className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 text-white text-sm font-bold bg-[#3b82f6]">
+                      {project.title[0]}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[#ddd] text-sm font-medium group-hover:text-white transition-colors truncate">{project.title}</p>
+                      <p className="text-[#444] text-[10px] truncate">{project.file_path}</p>
+                    </div>
+                    <div className="flex flex-col items-end flex-shrink-0">
+                      <span className="text-[#444] text-[10px]">{formatDate(project.last_modified)}</span>
+                      {project.is_cloud_synced && <span className="text-blue-400 text-[9px]">☁ Synced</span>}
+                    </div>
+                  </button>
+                ))
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -385,7 +542,7 @@ export function DashboardPage({ onOpenEditor }: DashboardPageProps) {
         <p className="text-[#666] text-[10px] font-bold uppercase tracking-[2px] mb-4">Başlangıç</p>
 
         <div className="space-y-1.5">
-          <SideButton icon={Icons.newFile} label="Yeni Proje" desc="Boş bir canvas oluştur" primary onClick={onOpenEditor} />
+          <SideButton icon={Icons.newFile} label="Yeni Proje" desc="Boş bir canvas oluştur" primary onClick={() => setShowNewProject(true)} />
           <SideButton icon={Icons.folder} label="Proje Aç" desc="Diskten .gef dosyası aç" onClick={handleOpenFile} />
           <SideButton icon={Icons.template} label="Şablondan Oluştur" desc="Hazır şablonlardan başla" onClick={() => {}} />
           <SideButton icon={Icons.cloud} label="Buluttan İndir" desc="Cloud projelerini senkronla" onClick={() => {}} />
@@ -400,7 +557,7 @@ export function DashboardPage({ onOpenEditor }: DashboardPageProps) {
 
         <div className="mt-auto pt-6">
           <div className="text-[#2a2a2a] text-[9px] uppercase tracking-[2px]">
-            <p>Mireditor v0.0.1</p>
+            <p>Mireditor v0.0.4</p>
             <p className="mt-0.5">Build 20260305</p>
           </div>
         </div>

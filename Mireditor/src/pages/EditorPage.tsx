@@ -1,143 +1,155 @@
-import React from 'react';
-import { useAuthStore } from '../store/useAuthStore';
+import React, { useState, useEffect, useMemo } from 'react';
+import { useEditorStore, ProjectConfig } from '../store/useEditorStore';
+import { useGlobalShortcuts } from '../hooks/useGlobalShortcuts';
+import { useDiscordRPC } from '../hooks/useDiscordRPC';
+import { EditorCanvas, loadCanvasJSON, resetCanvas } from '../components/editor/Canvas';
+import { EditorToolbar } from '../components/editor/Toolbar';
+import { EditorMenuBar } from '../components/editor/MenuBar';
+import { EditorLayerPanel } from '../components/editor/LayerPanel';
+import { EditorStatusBar } from '../components/editor/StatusBar';
+import { TextPropertiesBar } from '../components/editor/TextPropertiesBar';
+import { ShortcutsModal, AboutModal } from '../components/editor/Modals';
+
+const ipcRenderer = typeof window !== 'undefined' && (window as any).require
+  ? (window as any).require('electron').ipcRenderer
+  : null;
 
 interface EditorPageProps {
   onBack: () => void;
+  projectConfig?: ProjectConfig;
+  draftFilePath?: string;
 }
 
-export function EditorPage({ onBack }: EditorPageProps) {
-  const { user } = useAuthStore();
+export function EditorPage({ onBack, projectConfig, draftFilePath }: EditorPageProps) {
+  const [showShortcuts, setShowShortcuts] = useState(false);
+  const [showAbout, setShowAbout] = useState(false);
+  const { setProjectConfig } = useEditorStore();
+  const activeTool = useEditorStore((s) => s.activeTool);
+  const projectTitle = useEditorStore((s) => s.projectTitle);
+  const canvasWidth = useEditorStore((s) => s.canvasWidth);
+  const canvasHeight = useEditorStore((s) => s.canvasHeight);
 
-  const handleBack = () => {
-    onBack();
-  };
+  // Global keyboard shortcuts (works regardless of focus)
+  useGlobalShortcuts();
+
+  // Discord RPC — editör detayları
+  const rpcState = useMemo(() => ({
+    view: 'editor' as const,
+    projectTitle,
+    activeTool,
+    canvasSize: `${canvasWidth}×${canvasHeight}`,
+  }), [projectTitle, activeTool, canvasWidth, canvasHeight]);
+  useDiscordRPC(rpcState);
+
+  // Apply project config on mount
+  useEffect(() => {
+    if (projectConfig) {
+      setProjectConfig(projectConfig);
+    }
+  }, [projectConfig, setProjectConfig]);
+
+  // Load draft file when editor mounts (if draftFilePath is provided)
+  useEffect(() => {
+    if (!draftFilePath || !ipcRenderer) return;
+    const loadDraft = async () => {
+      try {
+        const raw = await ipcRenderer.invoke('read-file', { filePath: draftFilePath });
+        if (!raw) return;
+        const draft = JSON.parse(raw);
+
+        // Wait for canvas to be ready
+        const waitForCanvas = () => {
+          const canvas = useEditorStore.getState().canvas;
+          if (!canvas) {
+            setTimeout(waitForCanvas, 100);
+            return;
+          }
+
+          // Apply project config
+          useEditorStore.getState().setProjectConfig({
+            title: draft.title || 'Untitled',
+            width: draft.width || 1920,
+            height: draft.height || 1080,
+            backgroundColor: draft.canvas?.background || '#ffffff',
+          });
+
+          // Reset canvas dimensions
+          resetCanvas(canvas, draft.width || 1920, draft.height || 1080, draft.canvas?.background || '#ffffff');
+
+          // Restore layers
+          if (draft.layers && Array.isArray(draft.layers)) {
+            useEditorStore.setState({ layers: draft.layers, activeLayerId: draft.layers[0]?.id || null });
+          }
+
+          // Load canvas JSON
+          const canvasJson = typeof draft.canvas === 'string' ? draft.canvas : JSON.stringify(draft.canvas);
+          loadCanvasJSON(canvas, canvasJson).then(() => {
+            // Reset viewport to fit
+            const wa = canvas.getObjects().find((o: any) => (o as any).customId === '__workarea__');
+            if (wa) {
+              const container = (canvas as any).wrapperEl?.parentElement;
+              if (container) {
+                const w = container.offsetWidth;
+                const h = container.offsetHeight;
+                const zx = (w - 80) / (draft.width || 1920);
+                const zy = (h - 80) / (draft.height || 1080);
+                const z = Math.min(zx, zy, 1);
+                canvas.setZoom(z);
+                const center = wa.getCenterPoint();
+                canvas.viewportTransform![4] = w / 2 - center.x * z;
+                canvas.viewportTransform![5] = h / 2 - center.y * z;
+                useEditorStore.getState().setZoom(Math.round(z * 100));
+              }
+            }
+            canvas.requestRenderAll();
+            useEditorStore.getState().setModified(false);
+          });
+        };
+
+        waitForCanvas();
+      } catch (err) {
+        console.error('Failed to load draft:', err);
+      }
+    };
+    loadDraft();
+  }, [draftFilePath]);
+
+  // Register global modal triggers
+  useEffect(() => {
+    (window as any).__showShortcutsModal = () => setShowShortcuts(true);
+    (window as any).__showAboutModal = () => setShowAbout(true);
+    return () => {
+      delete (window as any).__showShortcutsModal;
+      delete (window as any).__showAboutModal;
+    };
+  }, []);
 
   return (
-    <div className="w-full h-full flex bg-[#090909]">
-      {/* LEFT TOOLBAR */}
-      <div className="w-14 bg-[#111] border-r border-[#1a1a1a] flex flex-col items-center py-3 gap-1">
-        <ToolButton icon="⬈" active />
-        <ToolButton icon="✎" />
-        <ToolButton icon="▧" />
-        <ToolButton icon="T" />
-        <ToolButton icon="✂" />
-        <ToolButton icon="💧" />
-        <div className="flex-1" />
-        <ToolButton icon="⚙" />
-      </div>
+    <div className="w-full h-full flex flex-col bg-[#111] select-none editor-container" style={{ cursor: 'default' }}>
+      {/* Top Menu Bar */}
+      <EditorMenuBar onBack={onBack} />
 
-      {/* CENTER: Canvas Area */}
-      <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Top Bar */}
-        <div className="h-9 bg-[#111] border-b border-[#1a1a1a] flex items-center px-4 gap-6">
-          <span className="text-[9px] text-[#555] font-bold tracking-[2px] uppercase">
-            Workspace: Default
-          </span>
-          <span className="text-[9px] text-[#555] font-bold tracking-[2px] uppercase">
-            Zoom: 100%
-          </span>
-          <span className="text-[9px] text-blue-400 font-bold tracking-[2px] uppercase">
-            Untitled-1 @ 100% (RGB/8)
-          </span>
-        </div>
+      {/* Text Properties Bar (shows when text object selected) */}
+      <TextPropertiesBar />
+
+      {/* Main area */}
+      <div className="flex-1 flex overflow-hidden min-h-0">
+        {/* Left Toolbar */}
+        <EditorToolbar />
 
         {/* Canvas */}
-        <div className="flex-1 flex items-center justify-center bg-[#181818] p-8">
-          <div
-            className="bg-white shadow-2xl"
-            style={{
-              width: '70%',
-              maxWidth: 900,
-              aspectRatio: '4/3',
-              boxShadow: '0 20px 60px rgba(0,0,0,0.6)',
-            }}
-          />
-        </div>
+        <EditorCanvas />
 
-        {/* Bottom Status */}
-        <div className="h-6 bg-[#111] border-t border-[#1a1a1a] flex items-center px-4 justify-between">
-          <span className="text-[9px] text-[#444] font-bold uppercase">
-            Doc: 1.44M / 0B
-          </span>
-          <span className="text-[9px] text-[#444] font-bold uppercase">
-            {user?.username ?? 'Unknown'} • Power User
-          </span>
-        </div>
+        {/* Right Panel */}
+        <EditorLayerPanel />
       </div>
 
-      {/* RIGHT PANELS */}
-      <div className="w-60 bg-[#111] border-l border-[#1a1a1a] flex flex-col">
-        {/* Navigator */}
-        <div className="h-44 border-b border-[#1a1a1a] p-3">
-          <h3 className="text-[9px] text-[#666] font-bold uppercase tracking-[2px] mb-2">
-            Navigator
-          </h3>
-          <div className="w-full h-28 bg-[#090909] border border-[#1f1f1f] rounded flex items-center justify-center">
-            <span className="text-[#222] text-[10px]">PREVIEW</span>
-          </div>
-        </div>
+      {/* Status Bar */}
+      <EditorStatusBar />
 
-        {/* Layers */}
-        <div className="flex-1 p-3 flex flex-col">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-[9px] text-[#666] font-bold uppercase tracking-[2px]">
-              Layers
-            </h3>
-            <span className="text-[9px] text-[#444]">Opacity: 100%</span>
-          </div>
-
-          <div className="flex-1 overflow-y-auto space-y-1">
-            <div className="bg-[#1a1a1a] p-2 rounded border border-blue-500/30 flex items-center gap-2">
-              <div className="w-7 h-5 bg-white rounded-sm flex-shrink-0" />
-              <span className="text-white text-xs flex-1">Background</span>
-              <span className="text-[#444] text-xs cursor-pointer hover:text-white">
-                👁
-              </span>
-            </div>
-          </div>
-
-          {/* Layer Controls */}
-          <div className="flex items-center justify-around pt-2 mt-2 border-t border-[#1a1a1a]">
-            <button className="text-[#555] hover:text-white text-sm transition-colors">
-              🗑
-            </button>
-            <button className="text-[#555] hover:text-white text-sm transition-colors">
-              📁
-            </button>
-            <button className="text-[#555] hover:text-white text-sm transition-colors">
-              ✚
-            </button>
-          </div>
-        </div>
-
-        {/* Logout */}
-        <button
-          onClick={handleBack}
-          className="p-3 border-t border-[#1a1a1a] bg-[#1a1a1a]/50 text-[#888] text-[9px] font-bold uppercase tracking-[2px] text-center hover:bg-[#222] hover:text-white transition-colors"
-        >
-          ← Dashboard'a Dön
-        </button>
-      </div>
+      {/* Modals */}
+      {showShortcuts && <ShortcutsModal onClose={() => setShowShortcuts(false)} />}
+      {showAbout && <AboutModal onClose={() => setShowAbout(false)} />}
     </div>
-  );
-}
-
-function ToolButton({
-  icon,
-  active = false,
-}: {
-  icon: string;
-  active?: boolean;
-}) {
-  return (
-    <button
-      className={`w-10 h-10 flex items-center justify-center rounded-lg text-lg transition-colors ${
-        active
-          ? 'bg-[#3b82f6] text-white'
-          : 'text-[#555] hover:bg-[#1a1a1a] hover:text-[#888]'
-      }`}
-    >
-      {icon}
-    </button>
   );
 }
