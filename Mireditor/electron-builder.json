@@ -1,0 +1,33 @@
+{
+  "appId": "com.mireditor.app",
+  "productName": "Mireditor",
+  "directories": {
+    "output": "release"
+  },
+  "files": [
+    "dist/**/*",
+    "main.electron.js",
+    "preload-splash.js",
+    "splash.html",
+    "assets/**/*",
+    "package.json"
+  ],
+  "win": {
+    "target": [
+      {
+        "target": "nsis",
+        "arch": [
+          "x64"
+        ]
+      }
+    ],
+    "icon": "assets/icon.png"
+  },
+  "nsis": {
+    "oneClick": false,
+    "perMachine": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true
+  }
+}

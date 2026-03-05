@@ -1,47 +1,54 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Text, Float, JSON
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Text, Enum
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from database import Base
 
+
 class User(Base):
     __tablename__ = "users"
-    id = Column(Integer, primary_key=True, index=True)
-    full_name = Column(String(100), nullable=False)
-    email = Column(String(150), unique=True, index=True, nullable=False)
+    user_id = Column(Integer, primary_key=True, autoincrement=True)
+    username = Column(String(50), unique=True, nullable=False)
+    email = Column(String(100), unique=True, nullable=False)
     password_hash = Column(String(255), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+    is_active = Column(Boolean, default=True)
+
 
 class UserSetting(Base):
     __tablename__ = "user_settings"
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
-    theme = Column(String(50), default="dark")
-    language = Column(String(10), default="tr")
-    export_format = Column(String(20), default="png")
-    
+    setting_id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.user_id"), nullable=False)
+    theme = Column(Enum("light", "dark", "system"), default="dark")
+    language = Column(String(5), default="tr-TR")
+    auto_save = Column(Boolean, default=True)
+
+
 class Draft(Base):
     __tablename__ = "drafts"
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
-    file_name = Column(String(255))
-    file_url = Column(String(500))
-    file_size_kb = Column(Float)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    draft_id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.user_id"), nullable=False)
+    title = Column(String(255), default="Adsız Taslak")
+    file_path = Column(String(500), nullable=False)
+    file_size_kb = Column(Integer)
+    last_modified = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    is_cloud_synced = Column(Boolean, default=False)
+
 
 class AiUsageLog(Base):
     __tablename__ = "ai_usage_log"
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
-    feature_used = Column(String(100))
-    tokens_consumed = Column(Integer, default=1)
+    log_id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.user_id"), nullable=False)
+    feature_name = Column(String(100))
+    tokens_used = Column(Integer, default=1)
     used_at = Column(DateTime, default=datetime.utcnow)
+
 
 class AppUpdate(Base):
     __tablename__ = "app_updates"
     update_id = Column(Integer, primary_key=True, autoincrement=True)
-    version_number = Column(String(50), unique=True, index=True, nullable=False)
-    platform = Column(String(50), default="windows")
-    download_url = Column(String(500))
+    version_number = Column(String(20), nullable=False)
+    platform = Column(Enum("windows", "macos", "linux"), nullable=False)
+    download_url = Column(String(500), nullable=False)
     release_notes = Column(Text)
     is_critical = Column(Boolean, default=False)
     release_date = Column(DateTime, default=datetime.utcnow)

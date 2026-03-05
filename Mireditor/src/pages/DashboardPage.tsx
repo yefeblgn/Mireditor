@@ -14,11 +14,11 @@ interface DashboardPageProps {
 
 interface ProjectItem {
   id: number;
-  file_name: string;
-  file_url: string;
+  title: string;
+  file_path: string;
   file_size_kb: number;
-  created_at: string;
-  color: string;
+  last_modified: string;
+  is_cloud_synced: boolean;
 }
 
 function formatDate(iso: string): string {
@@ -254,7 +254,7 @@ export function DashboardPage({ onOpenEditor }: DashboardPageProps) {
   };
 
   const filteredProjects = projects.filter(p =>
-    p.file_name.toLowerCase().includes(searchQuery.toLowerCase())
+    p.title.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   return (
@@ -362,16 +362,17 @@ export function DashboardPage({ onOpenEditor }: DashboardPageProps) {
                   className="w-full flex items-center gap-4 p-3 rounded-lg hover:bg-[#161616] transition-colors group text-left"
                 >
                   <div
-                    className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 text-white text-sm font-bold"
-                    style={{ backgroundColor: project.color }}
-                  >
-                    {project.file_name[0]}
+                    className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 text-white text-sm font-bold bg-[#3b82f6]">
+                    {project.title[0]}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-[#ddd] text-sm font-medium group-hover:text-white transition-colors truncate">{project.file_name}</p>
-                    <p className="text-[#444] text-[10px] truncate">{project.file_url}</p>
+                    <p className="text-[#ddd] text-sm font-medium group-hover:text-white transition-colors truncate">{project.title}</p>
+                    <p className="text-[#444] text-[10px] truncate">{project.file_path}</p>
                   </div>
-                  <span className="text-[#444] text-[10px] flex-shrink-0">{formatDate(project.created_at)}</span>
+                  <div className="flex flex-col items-end flex-shrink-0">
+                    <span className="text-[#444] text-[10px]">{formatDate(project.last_modified)}</span>
+                    {project.is_cloud_synced && <span className="text-blue-400 text-[9px]">☁ Synced</span>}
+                  </div>
                 </button>
               ))
             )}
