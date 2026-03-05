@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { CustomTitleBar } from './components/CustomTitleBar';
 import { AuthPage } from './pages/AuthPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { EditorPage } from './pages/EditorPage';
 import { useAuthStore } from './store/useAuthStore';
 import { ProjectConfig } from './store/useEditorStore';
+import { useDiscordRPC } from './hooks/useDiscordRPC';
 
 const ipcRenderer = typeof window !== 'undefined' && (window as any).require
   ? (window as any).require('electron').ipcRenderer
@@ -70,6 +71,16 @@ function App() {
   );
   const [isShuttingDown, setIsShuttingDown] = useState(false);
   const [projectConfig, setProjectConfig] = useState<ProjectConfig | null>(null);
+  const [draftFilePath, setDraftFilePath] = useState<string | null>(null);
+
+  // Discord RPC — view seviyesinde durum gönder
+  const rpcState = useMemo(() => {
+    if (view === 'editor' && projectConfig) {
+      return { view: 'editor', projectTitle: projectConfig.title };
+    }
+    return { view };
+  }, [view, projectConfig]);
+  useDiscordRPC(rpcState);
 
   // Shutdown IPC dinle
   useEffect(() => {
@@ -103,9 +114,10 @@ function App() {
     setView('loading');
   };
 
-  const handleOpenEditor = (config?: ProjectConfig) => {
+  const handleOpenEditor = (config?: ProjectConfig, filePath?: string) => {
     if (config) setProjectConfig(config);
     else setProjectConfig({ title: 'Untitled-1', width: 1920, height: 1080, backgroundColor: '#ffffff' });
+    setDraftFilePath(filePath || null);
     setView('loading');
     setTimeout(() => setView('editor'), 600);
   };
@@ -126,7 +138,7 @@ function App() {
           <DashboardPage onOpenEditor={handleOpenEditor} />
         )}
         {view === 'editor' && (
-          <EditorPage onBack={handleBackToDashboard} projectConfig={projectConfig || undefined} />
+          <EditorPage onBack={handleBackToDashboard} projectConfig={projectConfig || undefined} draftFilePath={draftFilePath || undefined} />
         )}
       </div>
     </div>

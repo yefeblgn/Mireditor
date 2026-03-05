@@ -115,6 +115,9 @@ interface EditorState {
   setCursorPos: (p: { x: number; y: number }) => void;
   documentSize: string;
   setDocumentSize: (s: string) => void;
+
+  // Reset
+  resetEditor: (cfg?: ProjectConfig) => void;
 }
 
 let _layerCounter = 1;
@@ -357,4 +360,25 @@ export const useEditorStore = create<EditorState>()((set, get) => ({
   setCursorPos: (p) => set({ cursorPos: p }),
   documentSize: '0 B',
   setDocumentSize: (s) => set({ documentSize: s }),
+
+  // Reset
+  resetEditor: (cfg) =>
+    set({
+      projectTitle: cfg?.title || 'Untitled-1',
+      canvasWidth: cfg?.width || 1920,
+      canvasHeight: cfg?.height || 1080,
+      projectBg: cfg?.backgroundColor || '#ffffff',
+      layers: [],
+      activeLayerId: null,
+      undoStack: [],
+      redoStack: [],
+      clipboardData: null,
+      isModified: false,
+      activeTool: 'move' as ToolType,
+      foregroundColor: '#000000',
+      backgroundColor: '#ffffff',
+      showGrid: false,
+      showRulers: false,
+      zoom: 100,
+    }),
 }));

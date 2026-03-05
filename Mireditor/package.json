@@ -1,6 +1,6 @@
 {
   "name": "mireditor",
-  "version": "0.0.1",
+  "version": "0.0.4",
   "main": "main.electron.js",
   "author": "Efe Bilgin",
   "description": "Mireditor - Graphics Engine",
@@ -11,10 +11,13 @@
     "electron": "npx electron .",
     "backend": "cd ../backend && python -m uvicorn main:app --reload --port 8000",
     "dev-desktop": "concurrently -n BACK,VITE,ELEC -c blue,green,magenta \"cd ../backend && python -m uvicorn main:app --reload --port 8000\" \"vite --port 5173\" \"npx wait-on http://localhost:5173 http-get://localhost:8000/health && npx electron .\"",
-    "build-exe": "vite build && electron-builder --win --x64 --config electron-builder.json"
+    "build-exe": "vite build && electron-builder --win --x64 --config electron-builder.json",
+    "build-exe-signed": "vite build && set CSC_LINK=./cert/mireditor-signing.pfx&& set CSC_KEY_PASSWORD=mireditor2026&& electron-builder --win --x64 --config electron-builder.json",
+    "create-cert": "powershell -ExecutionPolicy Bypass -File scripts/create-cert.ps1"
   },
   "dependencies": {
     "axios": "^1.13.6",
+    "discord-rpc": "^4.0.1",
     "electron-updater": "^6.8.3",
     "fabric": "^6.9.1",
     "jspdf": "^4.2.0",

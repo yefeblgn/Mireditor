@@ -2,11 +2,29 @@ const { app, BrowserWindow, ipcMain, dialog, net } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const fs = require('fs');
+const { execSync } = require('child_process');
+const { DiscordRPCManager } = require('./discord-rpc-manager');
+
+// ─── Discord Rich Presence ───
+let discordRPC = null;
 
 // Windows GPU heap corruption fix (Electron 40 + Windows)
 app.commandLine.appendSwitch('disable-gpu-sandbox');
 app.commandLine.appendSwitch('disable-software-rasterizer');
 app.commandLine.appendSwitch('no-sandbox');
+
+// ─── Windows Firewall Rule (runtime fallback) ───
+function ensureFirewallRule() {
+  if (process.platform !== 'win32' || !app.isPackaged) return;
+  try {
+    const exePath = app.getPath('exe');
+    // Silently add firewall rules if not already present
+    execSync(`netsh advfirewall firewall add rule name="Mireditor" dir=in action=allow program="${exePath}" enable=yes profile=any`, { stdio: 'ignore' });
+    execSync(`netsh advfirewall firewall add rule name="Mireditor Outbound" dir=out action=allow program="${exePath}" enable=yes profile=any`, { stdio: 'ignore' });
+  } catch {
+    // May fail without admin — installer already handles this
+  }
+}
 
 // ─── Config ───
 const VITE_URL = 'http://localhost:5173';
@@ -115,10 +133,18 @@ function checkAuthState() {
   }
 }
 
-// ─── Auto Updater (electron-updater — delta indirme) ───
-autoUpdater.autoDownload = false;
-autoUpdater.autoInstallOnAppQuit = false;
+// ─── Auto Updater (electron-updater — tam otomatik) ───
+autoUpdater.autoDownload = true;
+autoUpdater.autoInstallOnAppQuit = true;
 autoUpdater.logger = null; // Splash üzerinden kendi loglarımızı gösteriyoruz
+
+// Splash'a detaylı update log gönder
+function updateLog(message, type = 'info') {
+  splashStatus(message, type);
+  if (splashWindow && !splashWindow.isDestroyed()) {
+    splashWindow.webContents.send('update-log', { message, type, time: new Date().toLocaleTimeString('tr-TR') });
+  }
+}
 
 function checkAndApplyUpdates() {
   return new Promise((resolve) => {
@@ -136,51 +162,106 @@ function checkAndApplyUpdates() {
       }
     };
 
-    // 15 saniye timeout — güncelleme kontrolü takılırsa devam et
-    const timeout = setTimeout(() => {
+    // 15 saniye timeout — sadece ilk kontrol aşaması için
+    // İndirme başlarsa timeout iptal edilir, indirme için ayrı 5 dk timeout verilir
+    let checkTimeout = setTimeout(() => {
+      updateLog('Güncelleme kontrol zaman aşımı, devam ediliyor...', 'warn');
       finish(false);
     }, 15000);
 
-    autoUpdater.on('update-available', (info) => {
-      splashStatus(`Güncelleme bulundu: v${info.version}`);
-      splashProgress(72);
-      autoUpdater.downloadUpdate();
+    let downloadTimeout = null;
+
+    autoUpdater.on('checking-for-update', () => {
+      updateLog('Güncelleme sunucusu kontrol ediliyor...', 'info');
     });
 
-    autoUpdater.on('update-not-available', () => {
-      splashStatus('Güncel sürüm');
-      clearTimeout(timeout);
+    autoUpdater.on('update-available', (info) => {
+      // Kontrol timeout'unu iptal et — indirme başlayacak
+      if (checkTimeout) { clearTimeout(checkTimeout); checkTimeout = null; }
+      updateLog(`Yeni surum bulundu: v${info.version}`, 'success');
+      if (info.releaseNotes) {
+        const notes = typeof info.releaseNotes === 'string'
+          ? info.releaseNotes
+          : info.releaseNotes.map(n => n.note || n).join(', ');
+        updateLog(`Degisiklikler: ${notes.substring(0, 200)}`, 'info');
+      }
+      updateLog('Otomatik indirme baslatiliyor...', 'info');
+      splashProgress(72);
+      // İndirme için 5 dakika timeout
+      downloadTimeout = setTimeout(() => {
+        updateLog('Indirme zaman asimi, devam ediliyor...', 'warn');
+        finish(false);
+      }, 5 * 60 * 1000);
+    });
+
+    autoUpdater.on('update-not-available', (info) => {
+      updateLog(`Guncel surum: v${info.version}`, 'success');
+      if (checkTimeout) { clearTimeout(checkTimeout); checkTimeout = null; }
       finish(false);
     });
 
     autoUpdater.on('download-progress', (progress) => {
       const pct = Math.round(progress.percent);
-      splashStatus(`Güncelleme indiriliyor... %${pct}`);
-      // İndirme aşaması: %72 – %88 arası
-      splashProgress(72 + Math.round(pct * 0.16));
+      const speed = (progress.bytesPerSecond / 1024 / 1024).toFixed(1);
+      const transferred = (progress.transferred / 1024 / 1024).toFixed(1);
+      const total = (progress.total / 1024 / 1024).toFixed(1);
+      splashStatus(`Guncelleme indiriliyor... %${pct}`, 'info');
+      updateLog(`Indiriliyor: ${transferred}MB / ${total}MB (${speed} MB/s) - %${pct}`, 'info');
+      // İndirme aşaması: %72 – %90 arası
+      splashProgress(72 + Math.round(pct * 0.18));
     });
 
-    autoUpdater.on('update-downloaded', () => {
-      clearTimeout(timeout);
-      splashStatus('Güncelleme uygulanıyor...');
-      splashProgress(90);
-      // Kısa bir bekleme sonra yükle ve yeniden başlat
+    autoUpdater.on('update-downloaded', (info) => {
+      if (checkTimeout) { clearTimeout(checkTimeout); checkTimeout = null; }
+      if (downloadTimeout) { clearTimeout(downloadTimeout); downloadTimeout = null; }
+      updateLog(`v${info.version} indirildi, yukleniyor...`, 'success');
+      splashStatus('Guncelleme uygulaniyor, yeniden baslatilacak...', 'success');
+      splashProgress(95);
+      // 2 saniye bekle (kullanıcı logu görsün) sonra yükle ve yeniden başlat
       setTimeout(() => {
-        autoUpdater.quitAndInstall(true, true);
-      }, 1500);
+        try {
+          autoUpdater.quitAndInstall(false, true);
+        } catch (e) {
+          console.error('quitAndInstall failed, trying force:', e);
+          autoUpdater.quitAndInstall(true, true);
+        }
+      }, 2500);
       // resolve etmiyoruz — uygulama kapanacak
     });
 
     autoUpdater.on('error', (err) => {
-      console.error('Auto-updater error:', err?.message || err);
-      splashStatus('Güncelleme kontrol edilemedi');
-      clearTimeout(timeout);
+      console.error('Auto-updater error:', err);
+      // Kullanıcıya temiz mesaj göster, stack trace basma
+      const rawMsg = err?.message || 'Bilinmeyen hata';
+      let cleanMsg = 'Guncelleme kontrol edilemedi';
+      if (rawMsg.includes('net::ERR') || rawMsg.includes('ENOTFOUND') || rawMsg.includes('ECONNREFUSED')) {
+        cleanMsg = 'Guncelleme sunucusuna ulasilamiyor';
+      } else if (rawMsg.includes('404') || rawMsg.includes('Not Found') || rawMsg.includes('HttpError')) {
+        cleanMsg = 'Henuz yayinlanmis guncelleme yok';
+      } else if (rawMsg.includes('ETIMEDOUT') || rawMsg.includes('timeout')) {
+        cleanMsg = 'Guncelleme kontrolu zaman asimina ugradi';
+      } else if (rawMsg.includes('ERR_CONNECTION') || rawMsg.includes('socket')) {
+        cleanMsg = 'Baglanti hatasi, guncelleme atlaniyor';
+      }
+      updateLog(cleanMsg, 'warn');
+      if (checkTimeout) { clearTimeout(checkTimeout); checkTimeout = null; }
+      if (downloadTimeout) { clearTimeout(downloadTimeout); downloadTimeout = null; }
       finish(false);
     });
 
-    splashStatus('Güncelleme kontrol ediliyor...');
-    autoUpdater.checkForUpdates().catch(() => {
-      clearTimeout(timeout);
+    updateLog('Guncelleme kontrol ediliyor...', 'info');
+    splashStatus('Guncelleme kontrol ediliyor...');
+    autoUpdater.checkForUpdates().catch((err) => {
+      console.error('Auto-updater check failed:', err);
+      const rawMsg = err?.message || String(err);
+      let cleanMsg = 'Guncelleme kontrol edilemedi';
+      if (rawMsg.includes('404') || rawMsg.includes('Not Found')) {
+        cleanMsg = 'Henuz yayinlanmis guncelleme yok';
+      } else if (rawMsg.includes('net::ERR') || rawMsg.includes('ENOTFOUND')) {
+        cleanMsg = 'Guncelleme sunucusuna ulasilamiyor';
+      }
+      updateLog(cleanMsg, 'warn');
+      if (checkTimeout) { clearTimeout(checkTimeout); checkTimeout = null; }
       finish(false);
     });
   });
@@ -199,6 +280,7 @@ function createSplashWindow() {
     center: true,
     alwaysOnTop: true,
     skipTaskbar: true,
+    icon: path.join(__dirname, 'assets', 'icon.ico'),
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -218,6 +300,7 @@ function createMainWindow() {
     frame: false,
     show: false,
     backgroundColor: '#0f0f0f',
+    icon: path.join(__dirname, 'assets', 'icon.ico'),
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false,
@@ -264,6 +347,88 @@ function createMainWindow() {
     return true;
   });
 
+  // IPC: Read file (text)
+  ipcMain.handle('read-file', async (_event, { filePath }) => {
+    try {
+      return fs.readFileSync(filePath, 'utf-8');
+    } catch (err) {
+      console.error('read-file error:', err);
+      return null;
+    }
+  });
+
+  // IPC: List local drafts from user's drafts folder
+  ipcMain.handle('list-local-drafts', async () => {
+    try {
+      const draftsDir = path.join(app.getPath('userData'), 'drafts');
+      if (!fs.existsSync(draftsDir)) {
+        fs.mkdirSync(draftsDir, { recursive: true });
+        return [];
+      }
+      const files = fs.readdirSync(draftsDir).filter(f => f.endsWith('.gef'));
+      const drafts = files.map(f => {
+        const fp = path.join(draftsDir, f);
+        const stat = fs.statSync(fp);
+        let title = f.replace('.gef', '');
+        try {
+          const raw = fs.readFileSync(fp, 'utf-8');
+          const parsed = JSON.parse(raw);
+          if (parsed.title) title = parsed.title;
+        } catch {}
+        return {
+          fileName: f,
+          filePath: fp,
+          title,
+          lastModified: stat.mtime.toISOString(),
+          sizeKB: Math.round(stat.size / 1024),
+        };
+      });
+      // Sort by last modified descending
+      drafts.sort((a, b) => new Date(b.lastModified).getTime() - new Date(a.lastModified).getTime());
+      return drafts;
+    } catch (err) {
+      console.error('list-local-drafts error:', err);
+      return [];
+    }
+  });
+
+  // IPC: Save draft to local drafts folder
+  ipcMain.handle('save-local-draft', async (_event, { fileName, data }) => {
+    try {
+      const draftsDir = path.join(app.getPath('userData'), 'drafts');
+      if (!fs.existsSync(draftsDir)) fs.mkdirSync(draftsDir, { recursive: true });
+      const fp = path.join(draftsDir, fileName.endsWith('.gef') ? fileName : `${fileName}.gef`);
+      fs.writeFileSync(fp, data, 'utf-8');
+      return fp;
+    } catch (err) {
+      console.error('save-local-draft error:', err);
+      return null;
+    }
+  });
+
+  // IPC: Delete local draft
+  ipcMain.handle('delete-local-draft', async (_event, { filePath }) => {
+    try {
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+      return true;
+    } catch (err) {
+      console.error('delete-local-draft error:', err);
+      return false;
+    }
+  });
+
+  // IPC: Get drafts directory path
+  ipcMain.handle('get-drafts-dir', async () => {
+    return path.join(app.getPath('userData'), 'drafts');
+  });
+
+  // IPC: Discord RPC state update
+  ipcMain.on('discord-rpc-update', (_event, state) => {
+    if (discordRPC) {
+      discordRPC.setState(state);
+    }
+  });
+
   // IPC: Dosya Seçme Dialog (.gef uzantısı)
   ipcMain.handle('open-file-dialog', async () => {
     const result = await dialog.showOpenDialog(mainWindow, {
@@ -291,6 +456,12 @@ function gracefulShutdown() {
     // webContents erişilemezse direkt kapat
   }
 
+  // Discord RPC'yi kapat
+  if (discordRPC) {
+    discordRPC.destroy().catch(() => {});
+    discordRPC = null;
+  }
+
   // 2 saniye sonra force close
   setTimeout(() => {
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -302,6 +473,14 @@ function gracefulShutdown() {
 
 // ─── Boot Sequence ───
 async function bootSequence() {
+  // AŞAMA 0: Windows Firewall kuralını ekle
+  ensureFirewallRule();
+
+  // AŞAMA 0.5: Discord RPC başlat
+  discordRPC = new DiscordRPCManager();
+  discordRPC.connect();
+  discordRPC.setState({ view: 'loading' });
+
   // AŞAMA 1: Başlatılıyor
   splashProgress(0);
   splashStatus('Başlatılıyor...');

@@ -12,7 +12,8 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import { useEditorStore } from '../../store/useEditorStore';
-import { exportCanvasPNG, getCanvasJSON } from './Canvas';
+import { exportCanvasPNG, getCanvasJSON, loadCanvasJSON, resetCanvas } from './Canvas';
+import * as fabric from 'fabric';
 import jsPDF from 'jspdf';
 
 const ipcRenderer = typeof window !== 'undefined' && (window as any).require
@@ -32,6 +33,8 @@ interface MenuItem {
 export function EditorMenuBar({ onBack }: { onBack: () => void }) {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [openSub, setOpenSub] = useState<string | null>(null);
+  const [showNewProject, setShowNewProject] = useState(false);
+  const [showSavePrompt, setShowSavePrompt] = useState(false);
   const menuBarRef = useRef<HTMLDivElement>(null);
 
   const store = useEditorStore();
@@ -89,6 +92,11 @@ export function EditorMenuBar({ onBack }: { onBack: () => void }) {
     if (!store.canvas) return;
     const workarea = store.canvas.getObjects().find((o: any) => o.customId === '__workarea__');
     if (!workarea) return;
+
+    // Reset viewport for clean export
+    const vpt = store.canvas.viewportTransform!.slice();
+    store.canvas.viewportTransform = [1, 0, 0, 1, 0, 0];
+
     const dataUrl = store.canvas.toDataURL({
       format: 'jpeg',
       quality: 0.92,
@@ -97,6 +105,10 @@ export function EditorMenuBar({ onBack }: { onBack: () => void }) {
       width: store.canvasWidth,
       height: store.canvasHeight,
     });
+
+    // Restore viewport
+    store.canvas.viewportTransform = vpt;
+    store.canvas.requestRenderAll();
 
     if (ipcRenderer) {
       const filePath = await ipcRenderer.invoke('save-file-dialog', {
@@ -150,7 +162,42 @@ export function EditorMenuBar({ onBack }: { onBack: () => void }) {
     if (!json) return;
 
     const draftData = JSON.stringify({
-      version: '0.0.1',
+      version: '0.0.4',
+      title: store.projectTitle,
+      width: store.canvasWidth,
+      height: store.canvasHeight,
+      layers: store.layers,
+      canvas: JSON.parse(json),
+    });
+
+    // Always auto-save to local drafts folder
+    if (ipcRenderer) {
+      const fileName = `${store.projectTitle.replace(/[<>:"/\\|?*]/g, '_')}.gef`;
+      await ipcRenderer.invoke('save-local-draft', { fileName, data: draftData });
+    }
+
+    // Also allow "Save As" with file dialog
+    if (ipcRenderer) {
+      store.setModified(false);
+    } else {
+      // Web fallback: download as .gef file
+      const blob = new Blob([draftData], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${store.projectTitle}.gef`;
+      a.click();
+      URL.revokeObjectURL(url);
+      store.setModified(false);
+    }
+  }, [store]);
+
+  const doSaveDraftAs = useCallback(async () => {
+    const json = getCanvasJSON(store.canvas);
+    if (!json) return;
+
+    const draftData = JSON.stringify({
+      version: '0.0.4',
       title: store.projectTitle,
       width: store.canvasWidth,
       height: store.canvasHeight,
@@ -160,7 +207,7 @@ export function EditorMenuBar({ onBack }: { onBack: () => void }) {
 
     if (ipcRenderer) {
       const filePath = await ipcRenderer.invoke('save-file-dialog', {
-        title: 'Taslak Olarak Kaydet',
+        title: 'Farklı Kaydet',
         defaultPath: `${store.projectTitle}.gef`,
         filters: [{ name: 'GEF Dosyası', extensions: ['gef'] }],
       });
@@ -171,6 +218,112 @@ export function EditorMenuBar({ onBack }: { onBack: () => void }) {
     }
   }, [store]);
 
+  const doCloudSave = useCallback(async () => {
+    const json = getCanvasJSON(store.canvas);
+    if (!json) return;
+
+    const draftData = {
+      version: '0.0.4',
+      title: store.projectTitle,
+      width: store.canvasWidth,
+      height: store.canvasHeight,
+      layers: store.layers,
+      canvas: JSON.parse(json),
+    };
+
+    try {
+      const token = localStorage.getItem('mireditor-auth-storage');
+      let authToken = null;
+      if (token) {
+        try {
+          const parsed = JSON.parse(token);
+          authToken = parsed?.state?.token;
+        } catch {}
+      }
+
+      const axios = (await import('axios')).default;
+      await axios.post('https://manici.yefeblgn.net/mireditor/api/drafts/save', {
+        title: store.projectTitle,
+        data: JSON.stringify(draftData),
+      }, {
+        headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
+      });
+
+      store.setModified(false);
+    } catch (err) {
+      console.error('Cloud save error:', err);
+    }
+  }, [store]);
+
+  const doOpenDraft = useCallback(async () => {
+    if (!ipcRenderer) return;
+    const fp = await ipcRenderer.invoke('open-file-dialog');
+    if (!fp) return;
+    try {
+      const fs = (window as any).require('fs');
+      const raw = fs.readFileSync(fp, 'utf-8');
+      const draft = JSON.parse(raw);
+      if (draft.canvas && store.canvas) {
+        // Apply project config
+        store.setProjectConfig({
+          title: draft.title || 'Untitled',
+          width: draft.width || 1920,
+          height: draft.height || 1080,
+          backgroundColor: draft.canvas?.background || '#ffffff',
+        });
+        // Restore layers
+        if (draft.layers && Array.isArray(draft.layers)) {
+          useEditorStore.setState({ layers: draft.layers, activeLayerId: draft.layers[0]?.id || null });
+        }
+        // Load canvas JSON
+        const canvasJson = typeof draft.canvas === 'string' ? draft.canvas : JSON.stringify(draft.canvas);
+        await loadCanvasJSON(store.canvas, canvasJson);
+        // Reset viewport to fit
+        const wa = store.canvas.getObjects().find((o: any) => o.customId === '__workarea__');
+        if (wa) {
+          const container = (store.canvas as any).wrapperEl?.parentElement;
+          if (container) {
+            const w = container.offsetWidth;
+            const h = container.offsetHeight;
+            const zx = (w - 80) / (draft.width || 1920);
+            const zy = (h - 80) / (draft.height || 1080);
+            const z = Math.min(zx, zy, 1);
+            store.canvas.setZoom(z);
+            const center = wa.getCenterPoint();
+            store.canvas.viewportTransform![4] = w / 2 - center.x * z;
+            store.canvas.viewportTransform![5] = h / 2 - center.y * z;
+            store.setZoom(Math.round(z * 100));
+          }
+        }
+        store.canvas.requestRenderAll();
+        store.setModified(false);
+      }
+    } catch (err) {
+      console.error('Failed to open draft:', err);
+    }
+  }, [store]);
+
+  const doNewProject = useCallback((title: string, width: number, height: number, bg: string) => {
+    const canvas = store.canvas;
+    if (!canvas) return;
+    store.resetEditor({ title, width, height, backgroundColor: bg });
+    store.addLayer({ name: 'Arka Plan' });
+    resetCanvas(canvas, width, height, bg);
+    // Push initial history
+    const json = JSON.stringify(canvas.toJSON(['customId', 'layerId', 'isMarquee']));
+    store.pushHistory(json);
+    store.setModified(false);
+    setShowNewProject(false);
+  }, [store]);
+
+  const handleBack = useCallback(() => {
+    if (store.isModified) {
+      setShowSavePrompt(true);
+    } else {
+      onBack();
+    }
+  }, [store, onBack]);
+
   const doSelectAll = useCallback(() => {
     const canvas = store.canvas;
     if (!canvas) return;
@@ -178,16 +331,9 @@ export function EditorMenuBar({ onBack }: { onBack: () => void }) {
       (o: any) => o.customId !== '__workarea__' && !o.isMarquee && o.customId !== '__grid__',
     );
     if (objs.length > 0) {
-      import('fabric').then((fabricMod) => {
-        const sel = new fabricMod.ActiveSelection(objs, { canvas });
-        canvas.setActiveObject(sel);
-        canvas.requestRenderAll();
-      }).catch(() => {
-        if (objs[0]) {
-          canvas.setActiveObject(objs[0]);
-          canvas.requestRenderAll();
-        }
-      });
+      const sel = new fabric.ActiveSelection(objs, { canvas });
+      canvas.setActiveObject(sel);
+      canvas.requestRenderAll();
     }
   }, [store]);
 
@@ -235,19 +381,25 @@ export function EditorMenuBar({ onBack }: { onBack: () => void }) {
     }
   }, [store]);
 
+  // ── Register global triggers for keyboard shortcuts ──
+  useEffect(() => {
+    (window as any).__doSaveDraft = doSaveDraft;
+    (window as any).__showNewProject = () => setShowNewProject(true);
+    return () => {
+      delete (window as any).__doSaveDraft;
+      delete (window as any).__showNewProject;
+    };
+  }, [doSaveDraft]);
+
   // ── Menu definitions ──
   const menus: Record<string, MenuItem[]> = {
     Dosya: [
-      { label: 'Yeni', shortcut: 'Ctrl+N', action: onBack },
-      { label: 'Aç', shortcut: 'Ctrl+O', action: async () => {
-        if (ipcRenderer) {
-          const fp = await ipcRenderer.invoke('open-file-dialog');
-          if (fp) { /* load file */ }
-        }
-      }},
+      { label: 'Yeni', shortcut: 'Ctrl+N', action: () => setShowNewProject(true) },
+      { label: 'Aç', shortcut: 'Ctrl+O', action: doOpenDraft },
       { label: 'Kaydet', shortcut: 'Ctrl+S', action: doSaveDraft },
-      { label: 'Farklı Kaydet', shortcut: 'Ctrl+Shift+S', action: doSaveDraft },
-      { label: 'Taslak Olarak Kaydet', action: doSaveDraft },
+      { label: 'Farklı Kaydet', shortcut: 'Ctrl+Shift+S', action: doSaveDraftAs },
+      { label: '', separator: true },
+      { label: '☁ Buluta Kaydet', action: doCloudSave },
       { label: '', separator: true },
       { label: 'Dışa Aktar', submenu: [
         { label: 'PNG olarak', action: doExportPNG },
@@ -255,7 +407,7 @@ export function EditorMenuBar({ onBack }: { onBack: () => void }) {
         { label: 'PDF olarak', action: doExportPDF },
       ]},
       { label: '', separator: true },
-      { label: 'Dashboard\'a Dön', action: onBack },
+      { label: 'Dashboard\'a Dön', action: handleBack },
     ],
     Düzenle: [
       { label: 'Geri Al', shortcut: 'Ctrl+Z', action: doUndo, disabled: !store.canUndo() },
@@ -388,7 +540,6 @@ export function EditorMenuBar({ onBack }: { onBack: () => void }) {
     // For image objects, apply Fabric.js filters
     if (obj.type === 'image') {
       const img = obj as any;
-      const fabric = (window as any).fabric || {};
       switch (type) {
         case 'grayscale':
           img.filters = [...(img.filters || []), new fabric.filters.Grayscale()];
@@ -443,7 +594,7 @@ export function EditorMenuBar({ onBack }: { onBack: () => void }) {
     if (!canvas) return;
     const newZoom = absolute ? factor : Math.max(0.01, Math.min(64, canvas.getZoom() * factor));
     const center = canvas.getCenter();
-    canvas.zoomToPoint(new (window as any).fabric.Point(center.left, center.top), newZoom);
+    canvas.zoomToPoint(new fabric.Point(center.left, center.top), newZoom);
     store.setZoom(Math.round(newZoom * 100));
     canvas.requestRenderAll();
   };
@@ -556,6 +707,141 @@ export function EditorMenuBar({ onBack }: { onBack: () => void }) {
         <span className="text-[10px] text-blue-400/60 font-medium">
           {store.canvasWidth} × {store.canvasHeight}
         </span>
+      </div>
+
+      {/* New Project Modal */}
+      {showNewProject && <NewProjectModal
+        onClose={() => setShowNewProject(false)}
+        onCreate={doNewProject}
+      />}
+
+      {/* Save Prompt Modal */}
+      {showSavePrompt && (
+        <div className="fixed inset-0 z-[500] flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setShowSavePrompt(false)} />
+          <div className="relative w-[340px] bg-[#1a1a1a] border border-[#2a2a2a] rounded-xl shadow-2xl shadow-black/60 p-6">
+            <h2 className="text-white text-sm font-semibold mb-3">Kaydedilmemiş Değişiklikler</h2>
+            <p className="text-[#888] text-xs mb-5">Kaydetmeden çıkmak istediğinize emin misiniz?</p>
+            <div className="flex items-center gap-2 justify-end">
+              <button
+                onClick={() => setShowSavePrompt(false)}
+                className="px-3 py-1.5 text-[11px] text-[#ccc] bg-[#252525] rounded-lg hover:bg-[#333] transition-colors"
+              >İptal</button>
+              <button
+                onClick={() => { setShowSavePrompt(false); onBack(); }}
+                className="px-3 py-1.5 text-[11px] text-red-400 bg-red-500/10 rounded-lg hover:bg-red-500/20 transition-colors"
+              >Kaydetme</button>
+              <button
+                onClick={async () => { await doSaveDraft(); setShowSavePrompt(false); onBack(); }}
+                className="px-3 py-1.5 text-[11px] text-white bg-[#3b82f6] rounded-lg hover:bg-[#2563eb] transition-colors"
+              >Kaydet ve Çık</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── New Project Modal ──
+function NewProjectModal({ onClose, onCreate }: {
+  onClose: () => void;
+  onCreate: (title: string, width: number, height: number, bg: string) => void;
+}) {
+  const [title, setTitle] = useState('Untitled-1');
+  const [width, setWidth] = useState(1920);
+  const [height, setHeight] = useState(1080);
+  const [bg, setBg] = useState('#ffffff');
+
+  const presets = [
+    { label: 'Full HD (1920×1080)', w: 1920, h: 1080 },
+    { label: '4K (3840×2160)', w: 3840, h: 2160 },
+    { label: 'Instagram Post (1080×1080)', w: 1080, h: 1080 },
+    { label: 'Instagram Story (1080×1920)', w: 1080, h: 1920 },
+    { label: 'Twitter Banner (1500×500)', w: 1500, h: 500 },
+    { label: 'A4 (2480×3508)', w: 2480, h: 3508 },
+    { label: 'YouTube Thumbnail (1280×720)', w: 1280, h: 720 },
+  ];
+
+  return (
+    <div className="fixed inset-0 z-[500] flex items-center justify-center">
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative w-[400px] bg-[#1a1a1a] border border-[#2a2a2a] rounded-xl shadow-2xl shadow-black/60">
+        <div className="flex items-center justify-between px-5 py-3 border-b border-[#2a2a2a]">
+          <h2 className="text-white text-sm font-semibold">Yeni Proje</h2>
+          <button onClick={onClose} className="text-[#555] hover:text-white text-lg">×</button>
+        </div>
+        <div className="p-5 space-y-4">
+          <div>
+            <label className="text-[#888] text-[10px] font-bold uppercase tracking-wider block mb-1">Proje Adı</label>
+            <input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              className="w-full bg-[#111] text-white text-sm border border-[#333] rounded-lg px-3 py-2 outline-none focus:border-[#3b82f6]"
+            />
+          </div>
+          <div>
+            <label className="text-[#888] text-[10px] font-bold uppercase tracking-wider block mb-1">Hazır Boyut</label>
+            <select
+              onChange={(e) => {
+                const p = presets[Number(e.target.value)];
+                if (p) { setWidth(p.w); setHeight(p.h); }
+              }}
+              className="w-full bg-[#111] text-[#ccc] text-sm border border-[#333] rounded-lg px-3 py-2 outline-none focus:border-[#3b82f6]"
+            >
+              <option value="">Özel</option>
+              {presets.map((p, i) => (
+                <option key={i} value={i}>{p.label}</option>
+              ))}
+            </select>
+          </div>
+          <div className="flex gap-3">
+            <div className="flex-1">
+              <label className="text-[#888] text-[10px] font-bold uppercase tracking-wider block mb-1">Genişlik (px)</label>
+              <input
+                type="number"
+                value={width}
+                onChange={(e) => setWidth(Math.max(1, Number(e.target.value)))}
+                className="w-full bg-[#111] text-white text-sm border border-[#333] rounded-lg px-3 py-2 outline-none focus:border-[#3b82f6]"
+              />
+            </div>
+            <div className="flex-1">
+              <label className="text-[#888] text-[10px] font-bold uppercase tracking-wider block mb-1">Yükseklik (px)</label>
+              <input
+                type="number"
+                value={height}
+                onChange={(e) => setHeight(Math.max(1, Number(e.target.value)))}
+                className="w-full bg-[#111] text-white text-sm border border-[#333] rounded-lg px-3 py-2 outline-none focus:border-[#3b82f6]"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="text-[#888] text-[10px] font-bold uppercase tracking-wider block mb-1">Arka Plan Rengi</label>
+            <div className="flex items-center gap-2">
+              <input
+                type="color"
+                value={bg}
+                onChange={(e) => setBg(e.target.value)}
+                className="w-8 h-8 rounded border border-[#333] bg-transparent cursor-pointer p-0"
+              />
+              <input
+                value={bg}
+                onChange={(e) => setBg(e.target.value)}
+                className="flex-1 bg-[#111] text-white text-sm border border-[#333] rounded-lg px-3 py-2 outline-none focus:border-[#3b82f6]"
+              />
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-[#2a2a2a]">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 text-[11px] text-[#ccc] bg-[#252525] rounded-lg hover:bg-[#333] transition-colors"
+          >İptal</button>
+          <button
+            onClick={() => onCreate(title || 'Untitled-1', width, height, bg)}
+            className="px-4 py-2 text-[11px] text-white bg-[#3b82f6] rounded-lg hover:bg-[#2563eb] transition-colors font-medium"
+          >Oluştur</button>
+        </div>
       </div>
     </div>
   );

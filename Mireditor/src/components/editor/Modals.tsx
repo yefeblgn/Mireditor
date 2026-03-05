@@ -297,7 +297,7 @@ export function AboutModal({ onClose }: { onClose: () => void }) {
         <div className="p-8 text-center">
           <img src="./assets/icon-nobg.png" alt="Mireditor" className="w-16 h-16 mx-auto mb-4 opacity-80" draggable={false} />
           <h2 className="text-white text-lg font-bold mb-1">Mireditor</h2>
-          <p className="text-[#666] text-xs mb-4">Graphics Engine v0.0.1</p>
+          <p className="text-[#666] text-xs mb-4">Graphics Engine v0.0.4</p>
           <p className="text-[#555] text-[10px] mb-6">
             Profesyonel görsel düzenleme aracı.
             <br />Tasarım: Efe Bilgin

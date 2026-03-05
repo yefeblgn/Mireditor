@@ -2,11 +2,12 @@
   "appId": "com.mireditor.app",
   "productName": "Mireditor",
   "directories": {
-    "output": "release"
+    "output": "release2"
   },
   "files": [
     "dist/**/*",
     "main.electron.js",
+    "discord-rpc-manager.js",
     "preload-splash.js",
     "splash.html",
     "assets/**/*",
@@ -26,13 +27,16 @@
         ]
       }
     ],
-    "icon": "assets/icon.png"
+    "icon": "assets/icon.ico"
   },
   "nsis": {
     "oneClick": false,
-    "perMachine": false,
+    "perMachine": true,
     "allowToChangeInstallationDirectory": true,
     "createDesktopShortcut": true,
-    "createStartMenuShortcut": true
+    "createStartMenuShortcut": true,
+    "runAfterFinish": true,
+    "deleteAppDataOnUninstall": false,
+    "include": "installer.nsh"
   }
 }

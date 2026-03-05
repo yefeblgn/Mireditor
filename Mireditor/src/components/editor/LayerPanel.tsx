@@ -1,10 +1,11 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   Eye, EyeOff, Lock, Unlock, Plus, Trash2, Copy, FolderPlus,
   ChevronRight, ChevronDown, Layers, GripVertical,
   Blend, Sliders,
 } from 'lucide-react';
 import { useEditorStore, Layer } from '../../store/useEditorStore';
+import { getCanvasThumbnail, getLayerThumbnail } from './Canvas';
 
 const BLEND_MODES = [
   'normal', 'multiply', 'screen', 'overlay', 'darken', 'lighten',
@@ -25,12 +26,59 @@ export function EditorLayerPanel() {
     addGroup,
   } = useEditorStore();
 
+  const canvas = useEditorStore((s) => s.canvas);
+  const canvasWidth = useEditorStore((s) => s.canvasWidth);
+  const canvasHeight = useEditorStore((s) => s.canvasHeight);
+  const isModified = useEditorStore((s) => s.isModified);
+
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; layerId: string } | null>(null);
   const [showProperties, setShowProperties] = useState<string | null>(null);
+  const [navThumb, setNavThumb] = useState<string | null>(null);
+  const [layerThumbs, setLayerThumbs] = useState<Record<string, string | null>>({});
   const dragItem = useRef<number | null>(null);
   const dragOverItem = useRef<number | null>(null);
+  const thumbTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ── Refresh thumbnails on changes ──
+  const refreshThumbnails = useCallback(() => {
+    if (!canvas) return;
+    // Navigator thumbnail
+    const thumb = getCanvasThumbnail(canvas, canvasWidth, canvasHeight, 200);
+    setNavThumb(thumb);
+    // Per-layer thumbnails
+    const thumbs: Record<string, string | null> = {};
+    layers.forEach((layer) => {
+      if (!layer.isGroup) {
+        thumbs[layer.id] = getLayerThumbnail(canvas, layer.id, canvasWidth, canvasHeight, 48, 32);
+      }
+    });
+    setLayerThumbs(thumbs);
+  }, [canvas, canvasWidth, canvasHeight, layers]);
+
+  // Debounced refresh on canvas events
+  useEffect(() => {
+    if (!canvas) return;
+    const scheduleRefresh = () => {
+      if (thumbTimer.current) clearTimeout(thumbTimer.current);
+      thumbTimer.current = setTimeout(refreshThumbnails, 300);
+    };
+    // Refresh on initial mount
+    scheduleRefresh();
+    // Listen for canvas changes
+    canvas.on('after:render', scheduleRefresh);
+    return () => {
+      canvas.off('after:render', scheduleRefresh);
+      if (thumbTimer.current) clearTimeout(thumbTimer.current);
+    };
+  }, [canvas, refreshThumbnails]);
+
+  // Also refresh when isModified changes (after undo/redo/save etc)
+  useEffect(() => {
+    if (thumbTimer.current) clearTimeout(thumbTimer.current);
+    thumbTimer.current = setTimeout(refreshThumbnails, 400);
+  }, [isModified, refreshThumbnails]);
 
   const handleDragStart = (idx: number) => {
     dragItem.current = idx;
@@ -116,10 +164,16 @@ export function EditorLayerPanel() {
 
           {/* Layer preview */}
           <div
-            className={`w-6 h-4 rounded-sm flex-shrink-0 border border-[#333] flex items-center justify-center
-              ${layer.isGroup ? 'bg-[#2a2a2a]' : 'bg-white'}`}
+            className={`w-7 h-5 rounded-sm flex-shrink-0 border border-[#333] flex items-center justify-center overflow-hidden
+              ${layer.isGroup ? 'bg-[#2a2a2a]' : 'bg-[#222]'}`}
           >
-            {layer.isGroup && <FolderPlus size={8} className="text-[#666]" />}
+            {layer.isGroup ? (
+              <FolderPlus size={8} className="text-[#666]" />
+            ) : layerThumbs[layer.id] ? (
+              <img src={layerThumbs[layer.id]!} alt="" className="w-full h-full object-contain" draggable={false} />
+            ) : (
+              <div className="w-full h-full bg-white" />
+            )}
           </div>
 
           {/* Name */}
@@ -180,8 +234,12 @@ export function EditorLayerPanel() {
         <div className="flex items-center justify-between mb-1.5">
           <h3 className="text-[9px] text-[#666] font-bold uppercase tracking-[2px]">Gezgin</h3>
         </div>
-        <div className="w-full h-20 bg-[#111] border border-[#2a2a2a] rounded flex items-center justify-center">
-          <span className="text-[#333] text-[9px]">ÖNİZLEME</span>
+        <div className="w-full h-20 bg-[#111] border border-[#2a2a2a] rounded flex items-center justify-center overflow-hidden">
+          {navThumb ? (
+            <img src={navThumb} alt="Önizleme" className="w-full h-full object-contain" draggable={false} />
+          ) : (
+            <span className="text-[#333] text-[9px]">ÖNİZLEME</span>
+          )}
         </div>
       </div>
 

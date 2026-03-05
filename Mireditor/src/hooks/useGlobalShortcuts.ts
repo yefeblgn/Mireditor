@@ -296,10 +296,20 @@ export function useGlobalShortcuts() {
             }
             return;
 
+          case 's':
+            e.preventDefault();
+            // Ctrl+S triggers save - handled by MenuBar
+            (window as any).__doSaveDraft?.();
+            return;
+
           case 'n':
             if (shift) {
               e.preventDefault();
               store.addLayer();
+            } else {
+              e.preventDefault();
+              // Ctrl+N triggers new project - handled by MenuBar
+              (window as any).__showNewProject?.();
             }
             return;
 
@@ -322,10 +332,6 @@ export function useGlobalShortcuts() {
           case '1':
             e.preventDefault();
             setZoomAbsolute(1);
-            return;
-
-          case 's':
-            e.preventDefault();
             return;
         }
       }
