@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { useAuthStore } from '../store/useAuthStore';
 
-const API_URL = 'http://localhost:8000';
+const API_URL = 'https://manici.yefeblgn.net/mireditor/api';
 
 const ipcRenderer = typeof window !== 'undefined' && (window as any).require
   ? (window as any).require('electron').ipcRenderer

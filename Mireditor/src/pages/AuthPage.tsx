@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { useAuthStore } from '../store/useAuthStore';
 
-const API_URL = 'http://localhost:8000';
+const API_URL = 'https://manici.yefeblgn.net/mireditor/api';
 
 interface AuthPageProps {
   onSuccess: () => void;
