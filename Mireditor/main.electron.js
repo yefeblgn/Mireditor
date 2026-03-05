@@ -1,4 +1,5 @@
-const { app, BrowserWindow, ipcMain, dialog, net, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, net } = require('electron');
+const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const fs = require('fs');
 
@@ -114,56 +115,76 @@ function checkAuthState() {
   }
 }
 
-// ─── Versiyon kontrolü (Backend API) ───
-function checkForUpdate() {
+// ─── Auto Updater (electron-updater — delta indirme) ───
+autoUpdater.autoDownload = false;
+autoUpdater.autoInstallOnAppQuit = false;
+autoUpdater.logger = null; // Splash üzerinden kendi loglarımızı gösteriyoruz
+
+function checkAndApplyUpdates() {
   return new Promise((resolve) => {
-    try {
-      const url = `${API_URL}/check-update?current_version=${APP_VERSION}&platform=windows`;
-      const request = net.request({ url, method: 'GET' });
-      let body = '';
-      let done = false;
-
-      const timer = setTimeout(() => {
-        if (!done) {
-          done = true;
-          request.abort();
-          resolve(null); // Timeout — güncelleme kontrolü atlanır
-        }
-      }, 5000);
-
-      request.on('response', (response) => {
-        response.on('data', (chunk) => {
-          body += chunk.toString();
-        });
-        response.on('end', () => {
-          if (!done) {
-            done = true;
-            clearTimeout(timer);
-            try {
-              resolve(JSON.parse(body));
-            } catch {
-              resolve(null);
-            }
-          }
-        });
-      });
-
-      request.on('error', () => {
-        if (!done) {
-          done = true;
-          clearTimeout(timer);
-          resolve(null);
-        }
-      });
-
-      request.end();
-    } catch {
-      resolve(null);
+    // Dev modda güncelleme çalışmaz
+    if (!app.isPackaged) {
+      resolve(false);
+      return;
     }
+
+    let settled = false;
+    const finish = (val) => {
+      if (!settled) {
+        settled = true;
+        resolve(val);
+      }
+    };
+
+    // 15 saniye timeout — güncelleme kontrolü takılırsa devam et
+    const timeout = setTimeout(() => {
+      finish(false);
+    }, 15000);
+
+    autoUpdater.on('update-available', (info) => {
+      splashStatus(`Güncelleme bulundu: v${info.version}`);
+      splashProgress(72);
+      autoUpdater.downloadUpdate();
+    });
+
+    autoUpdater.on('update-not-available', () => {
+      splashStatus('Güncel sürüm');
+      clearTimeout(timeout);
+      finish(false);
+    });
+
+    autoUpdater.on('download-progress', (progress) => {
+      const pct = Math.round(progress.percent);
+      splashStatus(`Güncelleme indiriliyor... %${pct}`);
+      // İndirme aşaması: %72 – %88 arası
+      splashProgress(72 + Math.round(pct * 0.16));
+    });
+
+    autoUpdater.on('update-downloaded', () => {
+      clearTimeout(timeout);
+      splashStatus('Güncelleme uygulanıyor...');
+      splashProgress(90);
+      // Kısa bir bekleme sonra yükle ve yeniden başlat
+      setTimeout(() => {
+        autoUpdater.quitAndInstall(true, true);
+      }, 1500);
+      // resolve etmiyoruz — uygulama kapanacak
+    });
+
+    autoUpdater.on('error', (err) => {
+      console.error('Auto-updater error:', err?.message || err);
+      splashStatus('Güncelleme kontrol edilemedi');
+      clearTimeout(timeout);
+      finish(false);
+    });
+
+    splashStatus('Güncelleme kontrol ediliyor...');
+    autoUpdater.checkForUpdates().catch(() => {
+      clearTimeout(timeout);
+      finish(false);
+    });
   });
 }
-
-let pendingUpdate = null; // Non-critical güncelleme sonra gösterilecek
 
 // ─── Splash Window ───
 function createSplashWindow() {
@@ -219,6 +240,28 @@ function createMainWindow() {
       e.preventDefault();
       gracefulShutdown();
     }
+  });
+
+  // IPC: Save file dialog
+  ipcMain.handle('save-file-dialog', async (_event, options) => {
+    const result = await dialog.showSaveDialog(mainWindow, {
+      title: options?.title || 'Kaydet',
+      defaultPath: options?.defaultPath || 'untitled',
+      filters: options?.filters || [{ name: 'All Files', extensions: ['*'] }],
+    });
+    return result.canceled ? null : result.filePath;
+  });
+
+  // IPC: Save file (text)
+  ipcMain.handle('save-file', async (_event, { filePath, data }) => {
+    fs.writeFileSync(filePath, data, 'utf-8');
+    return true;
+  });
+
+  // IPC: Save file (binary/base64)
+  ipcMain.handle('save-file-binary', async (_event, { filePath, base64 }) => {
+    fs.writeFileSync(filePath, Buffer.from(base64, 'base64'));
+    return true;
   });
 
   // IPC: Dosya Seçme Dialog (.gef uzantısı)
@@ -282,42 +325,12 @@ async function bootSequence() {
   await sleep(400);
   splashProgress(70);
 
-  // AŞAMA 4: Versiyon kontrolü
+  // AŞAMA 4: Delta güncelleme (electron-updater)
+  // Güncelleme varsa indirir ve otomatik yeniden başlatır.
+  // Güncelleme yoksa veya hata olursa devam eder.
   splashProgress(70);
-  splashStatus('Güncelleme kontrol ediliyor...');
-
-  const updateInfo = await checkForUpdate();
-
-  if (updateInfo && updateInfo.update_available) {
-    if (updateInfo.is_critical) {
-      splashStatus(`Kritik güncelleme: v${updateInfo.latest_version}`);
-      splashProgress(75);
-      await sleep(1000);
-
-      const response = await dialog.showMessageBox(splashWindow, {
-        type: 'warning',
-        title: 'Kritik Güncelleme Gerekli',
-        message: `Mireditor v${updateInfo.latest_version} kritik bir güncelleme içeriyor.\n\nGüncel sürümü indirmeden devam edemezsiniz.`,
-        detail: updateInfo.release_notes || '',
-        buttons: ['Güncellemeyi İndir', 'Uygulamayı Kapat'],
-        defaultId: 0,
-        cancelId: 1,
-        noLink: true,
-      });
-
-      if (response.response === 0) {
-        // İndirme URL'sini tarayıcıda aç
-        const downloadUrl = updateInfo.download_url || `https://github.com/yefeblgn/Mireditor/releases/latest`;
-        shell.openExternal(downloadUrl);
-      }
-      // Her iki durumda da uygulamayı kapat
-      app.quit();
-      return;
-    } else {
-      pendingUpdate = updateInfo;
-    }
-  }
-  splashProgress(80);
+  await checkAndApplyUpdates();
+  splashProgress(90);
 
   // AŞAMA 5: Arayüz yükleme
   splashStatus('Arayüz yükleniyor...');
@@ -336,7 +349,6 @@ async function bootSequence() {
     });
     mainWindow.webContents.on('did-fail-load', async (_e, code, desc) => {
       console.error('Main window load failed:', code, desc);
-      // Vite yükleme hatası — tekrar dene
       splashStatus('Arayüz yeniden yükleniyor...');
       await sleep(2000);
       if (!app.isPackaged) {
@@ -345,10 +357,9 @@ async function bootSequence() {
     });
   });
 
-  splashProgress(90);
+  splashProgress(95);
   splashStatus('Hazırlanıyor...');
   await sleep(600);
-  splashProgress(95);
 
   splashStatus('Açılıyor...');
   splashProgress(100);
@@ -363,27 +374,6 @@ async function bootSequence() {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.show();
     mainWindow.focus();
-  }
-
-  // ─── Non-critical güncelleme bildirimi (splash kapandıktan sonra) ───
-  if (pendingUpdate) {
-    await sleep(2000); // Kullanıcı arayüzü görsün önce
-    const response = await dialog.showMessageBox(mainWindow, {
-      type: 'info',
-      title: 'Güncelleme Mevcut',
-      message: `Mireditor v${pendingUpdate.latest_version} yayınlandı!`,
-      detail: `Mevcut sürüm: v${APP_VERSION}\n\n${pendingUpdate.release_notes || 'Yeni özellikler ve hata düzeltmeleri.'}`,
-      buttons: ['Şimdi İndir', 'Sonra Hatırlat'],
-      defaultId: 0,
-      cancelId: 1,
-      noLink: true,
-    });
-
-    if (response.response === 0) {
-      const downloadUrl = pendingUpdate.download_url || `https://github.com/yefeblgn/Mireditor/releases/latest`;
-      shell.openExternal(downloadUrl);
-    }
-    pendingUpdate = null;
   }
 }
 

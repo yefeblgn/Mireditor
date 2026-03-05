@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { useAuthStore } from '../store/useAuthStore';
+import { NewProjectModal } from '../components/editor/Modals';
+import { ProjectConfig } from '../store/useEditorStore';
 
 const API_URL = 'https://manici.yefeblgn.net/mireditor/api';
 
@@ -9,7 +11,7 @@ const ipcRenderer = typeof window !== 'undefined' && (window as any).require
   : null;
 
 interface DashboardPageProps {
-  onOpenEditor: () => void;
+  onOpenEditor: (config?: ProjectConfig) => void;
 }
 
 interface ProjectItem {
@@ -209,6 +211,7 @@ export function DashboardPage({ onOpenEditor }: DashboardPageProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [showSettings, setShowSettings] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
+  const [showNewProject, setShowNewProject] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   // Click outside → menü kapat
@@ -262,6 +265,15 @@ export function DashboardPage({ onOpenEditor }: DashboardPageProps) {
       {/* Modals */}
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
       {showProfile && <ProfileModal onClose={() => setShowProfile(false)} user={user} />}
+      {showNewProject && (
+        <NewProjectModal
+          onClose={() => setShowNewProject(false)}
+          onCreate={(config) => {
+            setShowNewProject(false);
+            onOpenEditor(config);
+          }}
+        />
+      )}
 
       {/* LEFT SIDE - Son Projeler */}
       <div className="flex-1 flex flex-col overflow-hidden">
@@ -358,7 +370,7 @@ export function DashboardPage({ onOpenEditor }: DashboardPageProps) {
               filteredProjects.map((project) => (
                 <button
                   key={project.id}
-                  onClick={onOpenEditor}
+                  onClick={() => onOpenEditor()}
                   className="w-full flex items-center gap-4 p-3 rounded-lg hover:bg-[#161616] transition-colors group text-left"
                 >
                   <div
@@ -385,7 +397,7 @@ export function DashboardPage({ onOpenEditor }: DashboardPageProps) {
         <p className="text-[#666] text-[10px] font-bold uppercase tracking-[2px] mb-4">Başlangıç</p>
 
         <div className="space-y-1.5">
-          <SideButton icon={Icons.newFile} label="Yeni Proje" desc="Boş bir canvas oluştur" primary onClick={onOpenEditor} />
+          <SideButton icon={Icons.newFile} label="Yeni Proje" desc="Boş bir canvas oluştur" primary onClick={() => setShowNewProject(true)} />
           <SideButton icon={Icons.folder} label="Proje Aç" desc="Diskten .gef dosyası aç" onClick={handleOpenFile} />
           <SideButton icon={Icons.template} label="Şablondan Oluştur" desc="Hazır şablonlardan başla" onClick={() => {}} />
           <SideButton icon={Icons.cloud} label="Buluttan İndir" desc="Cloud projelerini senkronla" onClick={() => {}} />

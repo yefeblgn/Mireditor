@@ -4,6 +4,7 @@ import { AuthPage } from './pages/AuthPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { EditorPage } from './pages/EditorPage';
 import { useAuthStore } from './store/useAuthStore';
+import { ProjectConfig } from './store/useEditorStore';
 
 const ipcRenderer = typeof window !== 'undefined' && (window as any).require
   ? (window as any).require('electron').ipcRenderer
@@ -68,6 +69,7 @@ function App() {
     isAuthenticated ? 'loading' : 'auth'
   );
   const [isShuttingDown, setIsShuttingDown] = useState(false);
+  const [projectConfig, setProjectConfig] = useState<ProjectConfig | null>(null);
 
   // Shutdown IPC dinle
   useEffect(() => {
@@ -101,7 +103,9 @@ function App() {
     setView('loading');
   };
 
-  const handleOpenEditor = () => {
+  const handleOpenEditor = (config?: ProjectConfig) => {
+    if (config) setProjectConfig(config);
+    else setProjectConfig({ title: 'Untitled-1', width: 1920, height: 1080, backgroundColor: '#ffffff' });
     setView('loading');
     setTimeout(() => setView('editor'), 600);
   };
@@ -122,7 +126,7 @@ function App() {
           <DashboardPage onOpenEditor={handleOpenEditor} />
         )}
         {view === 'editor' && (
-          <EditorPage onBack={handleBackToDashboard} />
+          <EditorPage onBack={handleBackToDashboard} projectConfig={projectConfig || undefined} />
         )}
       </div>
     </div>
