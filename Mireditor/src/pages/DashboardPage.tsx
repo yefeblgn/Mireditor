@@ -1,32 +1,17 @@
 import React, { useState, useEffect, useRef } from 'react';
-import axios from 'axios';
 import { useAuthStore } from '../store/useAuthStore';
-
-const API_URL = 'https://manici.yefeblgn.net/mireditor/api';
-
-const ipcRenderer = typeof window !== 'undefined' && (window as any).require
-  ? (window as any).require('electron').ipcRenderer
-  : null;
+import { useEditorStore } from '../editor/store/useEditorStore';
+import { listRecents, openProject, openProjectByPath, isElectron, type RecentProject } from '../editor/io/fileService';
 
 interface DashboardPageProps {
   onOpenEditor: () => void;
 }
 
-interface ProjectItem {
-  id: number;
-  title: string;
-  file_path: string;
-  file_size_kb: number;
-  last_modified: string;
-  is_cloud_synced: boolean;
-}
-
-function formatDate(iso: string): string {
+function formatDate(ms: number): string {
   try {
-    const d = new Date(iso);
-    return d.toLocaleDateString('tr-TR', { day: 'numeric', month: 'short', year: 'numeric' });
+    return new Date(ms).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short', year: 'numeric' });
   } catch {
-    return iso;
+    return '';
   }
 }
 
@@ -203,8 +188,9 @@ function ProfileModal({ onClose, user }: { onClose: () => void; user: any }) {
 // ─── Dashboard ───
 export function DashboardPage({ onOpenEditor }: DashboardPageProps) {
   const { user, logout } = useAuthStore();
+  const setDocument = useEditorStore((s) => s.setDocument);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [projects, setProjects] = useState<ProjectItem[]>([]);
+  const [projects, setProjects] = useState<RecentProject[]>([]);
   const [loadingProjects, setLoadingProjects] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [showSettings, setShowSettings] = useState(false);
@@ -224,37 +210,52 @@ export function DashboardPage({ onOpenEditor }: DashboardPageProps) {
     }
   }, [menuOpen]);
 
-  // API'den projeleri çek
+  // Lokal son projeleri yükle (local-first)
   useEffect(() => {
-    const fetchDrafts = async () => {
+    let alive = true;
+    (async () => {
       setLoadingProjects(true);
       try {
-        const userId = user?.id ?? 1;
-        const res = await axios.get(`${API_URL}/drafts/${userId}`);
-        setProjects(res.data.drafts || []);
-      } catch (err) {
-        console.error('Drafts fetch error:', err);
-        setProjects([]);
+        const list = await listRecents();
+        if (alive) setProjects(list);
       } finally {
-        setLoadingProjects(false);
+        if (alive) setLoadingProjects(false);
       }
+    })();
+    return () => {
+      alive = false;
     };
-    fetchDrafts();
-  }, [user?.id]);
+  }, []);
 
+  // Diskten .gef proje aç
   const handleOpenFile = async () => {
-    if (ipcRenderer) {
-      const filePath = await ipcRenderer.invoke('open-file-dialog');
-      if (filePath) {
-        onOpenEditor();
-      }
-    } else {
+    const doc = await openProject();
+    if (doc) {
+      setDocument(doc);
       onOpenEditor();
     }
   };
 
-  const filteredProjects = projects.filter(p =>
-    p.title.toLowerCase().includes(searchQuery.toLowerCase())
+  // Son projelerden birini aç (yalnızca Electron'da yoldan okunabilir)
+  const handleOpenRecent = async (proj: RecentProject) => {
+    if (isElectron()) {
+      const doc = await openProjectByPath(proj.path);
+      if (doc) {
+        setDocument(doc);
+        onOpenEditor();
+      }
+    } else {
+      handleOpenFile();
+    }
+  };
+
+  const handleNewProject = () => {
+    useEditorStore.getState().closeDocument();
+    onOpenEditor();
+  };
+
+  const filteredProjects = projects.filter((p) =>
+    p.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   return (
@@ -357,21 +358,24 @@ export function DashboardPage({ onOpenEditor }: DashboardPageProps) {
             ) : (
               filteredProjects.map((project) => (
                 <button
-                  key={project.id}
-                  onClick={onOpenEditor}
+                  key={project.path}
+                  onClick={() => handleOpenRecent(project)}
                   className="w-full flex items-center gap-4 p-3 rounded-lg hover:bg-[#161616] transition-colors group text-left"
                 >
-                  <div
-                    className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 text-white text-sm font-bold bg-[#3b82f6]">
-                    {project.title[0]}
+                  <div className="w-10 h-10 rounded-lg flex-shrink-0 overflow-hidden bg-[#3b82f6] flex items-center justify-center">
+                    {project.thumbnail ? (
+                      <img src={project.thumbnail} alt="" className="w-full h-full object-cover" draggable={false} />
+                    ) : (
+                      <span className="text-white text-sm font-bold">{project.name[0]?.toUpperCase() ?? 'P'}</span>
+                    )}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-[#ddd] text-sm font-medium group-hover:text-white transition-colors truncate">{project.title}</p>
-                    <p className="text-[#444] text-[10px] truncate">{project.file_path}</p>
+                    <p className="text-[#ddd] text-sm font-medium group-hover:text-white transition-colors truncate">{project.name}</p>
+                    <p className="text-[#444] text-[10px] truncate">{project.path}</p>
                   </div>
                   <div className="flex flex-col items-end flex-shrink-0">
-                    <span className="text-[#444] text-[10px]">{formatDate(project.last_modified)}</span>
-                    {project.is_cloud_synced && <span className="text-blue-400 text-[9px]">☁ Synced</span>}
+                    <span className="text-[#444] text-[10px]">{formatDate(project.modified)}</span>
+                    <span className="text-[#333] text-[9px]">{project.sizeKb} KB</span>
                   </div>
                 </button>
               ))
@@ -385,7 +389,7 @@ export function DashboardPage({ onOpenEditor }: DashboardPageProps) {
         <p className="text-[#666] text-[10px] font-bold uppercase tracking-[2px] mb-4">Başlangıç</p>
 
         <div className="space-y-1.5">
-          <SideButton icon={Icons.newFile} label="Yeni Proje" desc="Boş bir canvas oluştur" primary onClick={onOpenEditor} />
+          <SideButton icon={Icons.newFile} label="Yeni Proje" desc="Boş bir canvas oluştur" primary onClick={handleNewProject} />
           <SideButton icon={Icons.folder} label="Proje Aç" desc="Diskten .gef dosyası aç" onClick={handleOpenFile} />
           <SideButton icon={Icons.template} label="Şablondan Oluştur" desc="Hazır şablonlardan başla" onClick={() => {}} />
           <SideButton icon={Icons.cloud} label="Buluttan İndir" desc="Cloud projelerini senkronla" onClick={() => {}} />

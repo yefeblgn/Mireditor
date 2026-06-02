@@ -9,8 +9,9 @@
     "build": "vite build",
     "preview": "vite preview",
     "electron": "npx electron .",
-    "backend": "cd ../backend && python -m uvicorn main:app --reload --port 8000",
-    "dev-desktop": "concurrently -n BACK,VITE,ELEC -c blue,green,magenta \"cd ../backend && python -m uvicorn main:app --reload --port 8000\" \"vite --port 5173\" \"npx wait-on http://localhost:5173 http-get://localhost:8000/health && npx electron .\"",
+    "typecheck": "tsc --noEmit",
+    "backend": "cd ../backend && node server.js",
+    "dev-desktop": "concurrently -n BACK,VITE,ELEC -c blue,green,magenta \"cd ../backend && node server.js\" \"vite --port 5173\" \"npx wait-on http://localhost:5173 && npx electron .\"",
     "build-exe": "vite build && electron-builder --win --x64 --config electron-builder.json"
   },
   "dependencies": {
@@ -21,6 +22,7 @@
   },
   "devDependencies": {
     "@types/react": "~19.2.2",
+    "@types/react-dom": "~19.2.2",
     "@vitejs/plugin-react": "^5.1.4",
     "autoprefixer": "^10.4.27",
     "concurrently": "^9.2.1",
