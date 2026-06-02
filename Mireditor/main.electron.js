@@ -28,7 +28,7 @@ function ensureFirewallRule() {
 
 // ─── Config ───
 const VITE_URL = 'http://localhost:5173';
-const API_URL = app.isPackaged ? 'https://manici.yefeblgn.net/mireditor/api' : 'http://localhost:8000';
+const API_URL = app.isPackaged ? 'https://manici.yefeblgn.net/mireditor/api' : 'http://localhost:3000/api';
 const RETRY_DELAYS = [4, 8, 12, 16, 20, 24, 28, 32, 36]; // saniye
 const APP_VERSION = '0.0.1';
 
@@ -95,7 +95,9 @@ function checkUrl(url, timeout = 3000) {
 }
 
 // ─── Retry ile servis kontrolü ───
-async function waitForService(name, url, progressStart, progressEnd) {
+// maxAttempts: null ise sonsuz bekler (zorunlu servis, ör. Vite arayüzü).
+// Sayı ise o kadar denedikten sonra false döner (opsiyonel servis — çevrimdışı mod).
+async function waitForService(name, url, progressStart, progressEnd, maxAttempts = null) {
   let attempt = 0;
 
   while (true) {
@@ -107,8 +109,17 @@ async function waitForService(name, url, progressStart, progressEnd) {
       return true;
     }
 
-    // Bağlantı başarısız — retry
     attempt++;
+
+    // Opsiyonel servis: deneme limiti aşıldıysa çevrimdışı devam et
+    if (maxAttempts !== null && attempt >= maxAttempts) {
+      splashStatus(`${name} bulunamadı — çevrimdışı mod`, 'warn');
+      splashProgress(progressEnd);
+      await sleep(500);
+      return false;
+    }
+
+    // Bağlantı başarısız — retry
     const retryDelay = RETRY_DELAYS[Math.min(attempt - 1, RETRY_DELAYS.length - 1)];
 
     // Sadece geri sayımı güncelle
@@ -442,6 +453,125 @@ function createMainWindow() {
     if (result.canceled || result.filePaths.length === 0) return null;
     return result.filePaths[0];
   });
+
+  registerFileHandlers();
+}
+
+// ─── Son Projeler (local store) ───
+function recentsPath() {
+  return path.join(app.getPath('userData'), 'recents.json');
+}
+function readRecents() {
+  try {
+    return JSON.parse(fs.readFileSync(recentsPath(), 'utf8'));
+  } catch {
+    return [];
+  }
+}
+function writeRecents(list) {
+  try {
+    fs.writeFileSync(recentsPath(), JSON.stringify(list.slice(0, 20)));
+  } catch (e) {
+    console.error('recents yazılamadı:', e);
+  }
+}
+function addRecentEntry(entry) {
+  const list = readRecents().filter((r) => r.path !== entry.path);
+  list.unshift(entry);
+  writeRecents(list);
+}
+
+let fileHandlersRegistered = false;
+
+// ─── Dosya İşlemleri IPC ───
+function registerFileHandlers() {
+  if (fileHandlersRegistered) return;
+  fileHandlersRegistered = true;
+
+  // Proje kaydet
+  ipcMain.handle('project:save', async (_e, payload) => {
+    let target = payload.currentPath;
+    if (!target) {
+      const result = await dialog.showSaveDialog(mainWindow, {
+        title: 'Projeyi Kaydet',
+        defaultPath: `${payload.suggestedName || 'Adsiz'}.gef`,
+        filters: [{ name: 'Mireditor Projesi', extensions: ['gef'] }],
+      });
+      if (result.canceled || !result.filePath) return null;
+      target = result.filePath;
+    }
+    try {
+      fs.writeFileSync(target, payload.json, 'utf8');
+      const stat = fs.statSync(target);
+      addRecentEntry({
+        path: target,
+        name: payload.suggestedName || 'Adsiz',
+        thumbnail: payload.thumbnail || '',
+        modified: Date.now(),
+        sizeKb: Math.round(stat.size / 1024),
+      });
+      return target;
+    } catch (err) {
+      console.error('project:save hatası:', err);
+      return null;
+    }
+  });
+
+  // Proje aç (dialog)
+  ipcMain.handle('project:open', async () => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'Proje Aç',
+      filters: [{ name: 'Mireditor Projesi', extensions: ['gef'] }],
+      properties: ['openFile'],
+    });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    const p = result.filePaths[0];
+    try {
+      const json = fs.readFileSync(p, 'utf8');
+      addRecentEntry({ path: p, name: path.basename(p, '.gef'), thumbnail: '', modified: Date.now(), sizeKb: Math.round(fs.statSync(p).size / 1024) });
+      return { json, path: p };
+    } catch (err) {
+      console.error('project:open hatası:', err);
+      return null;
+    }
+  });
+
+  // Belirli yoldan aç
+  ipcMain.handle('project:openPath', async (_e, p) => {
+    try {
+      const json = fs.readFileSync(p, 'utf8');
+      return { json, path: p };
+    } catch (err) {
+      console.error('project:openPath hatası:', err);
+      return null;
+    }
+  });
+
+  // Görüntü dışa aktar
+  ipcMain.handle('export:image', async (_e, payload) => {
+    const ext = payload.format === 'jpeg' ? 'jpg' : payload.format;
+    const result = await dialog.showSaveDialog(mainWindow, {
+      title: 'Görüntüyü Dışa Aktar',
+      defaultPath: `${payload.suggestedName || 'mireditor'}.${ext}`,
+      filters: [{ name: payload.format.toUpperCase(), extensions: [ext] }],
+    });
+    if (result.canceled || !result.filePath) return false;
+    try {
+      const base64 = payload.dataUrl.replace(/^data:image\/\w+;base64,/, '');
+      fs.writeFileSync(result.filePath, Buffer.from(base64, 'base64'));
+      return true;
+    } catch (err) {
+      console.error('export:image hatası:', err);
+      return false;
+    }
+  });
+
+  // Son projeler
+  ipcMain.handle('recents:list', () => readRecents());
+  ipcMain.handle('recents:add', (_e, entry) => {
+    addRecentEntry(entry);
+    return true;
+  });
 }
 
 // ─── Graceful Shutdown ───
@@ -495,7 +625,8 @@ async function bootSequence() {
   }
 
   splashProgress(35);
-  await waitForService('Sunucu', `${API_URL}/health`, 35, 60);
+  // Sunucu opsiyonel — local-first. Birkaç deneme sonra çevrimdışı moda geç.
+  await waitForService('Sunucu', `${API_URL}/health`, 35, 60, 2);
 
   // AŞAMA 3: Oturum kontrolü
   splashProgress(60);

@@ -1,13 +1,21 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 
+export interface AuthUser {
+  id: number;
+  username: string;
+  email?: string;
+  role?: 'poweruser' | 'standard' | string;
+  [key: string]: unknown;
+}
+
 interface AuthState {
   token: string | null;
   isAuthenticated: boolean;
-  user: any | null;
+  user: AuthUser | null;
   rememberMe: boolean;
   setToken: (token: string | null) => void;
-  setUser: (user: any | null) => void;
+  setUser: (user: AuthUser | null) => void;
   setRememberMe: (value: boolean) => void;
   logout: () => void;
 }
