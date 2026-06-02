@@ -41,6 +41,79 @@ html, body, #root {
 }
 
 /* ============================================
+   EDITOR STYLES
+   ============================================ */
+
+/* Fix text cursor on non-text elements */
+.editor-container,
+.editor-container * {
+  cursor: default !important;
+}
+
+.editor-container canvas {
+  cursor: inherit !important;
+}
+
+.editor-container input,
+.editor-container textarea,
+.editor-container select {
+  cursor: text !important;
+}
+
+.editor-container input[type="range"] {
+  cursor: pointer !important;
+}
+
+.editor-container input[type="color"] {
+  cursor: pointer !important;
+}
+
+.editor-container input[type="checkbox"] {
+  cursor: pointer !important;
+}
+
+.editor-container button {
+  cursor: default !important;
+}
+
+/* Toolbar scrollbar */
+.editor-toolbar::-webkit-scrollbar {
+  width: 0;
+}
+
+/* Brush size vertical slider */
+.editor-brush-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+}
+
+.editor-brush-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #3b82f6;
+  border: none;
+}
+
+.editor-brush-slider::-webkit-slider-runnable-track {
+  width: 4px;
+  background: #333;
+  border-radius: 2px;
+}
+
+/* Canvas container cursor override (set by JS) */
+.editor-container .canvas-container {
+  cursor: inherit !important;
+}
+
+.editor-container .upper-canvas {
+  cursor: inherit !important;
+}
+
+/* ============================================
    AUTH PAGE ANIMATIONS
    ============================================ */
 
