@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useAuthStore } from '../store/useAuthStore';
 import { useEditorStore } from '../editor/store/useEditorStore';
 import { useEditorShortcuts } from '../editor/shortcuts';
@@ -11,10 +11,16 @@ import { NavigatorPanel } from '../editor/panels/NavigatorPanel';
 import { HistoryPanel } from '../editor/panels/HistoryPanel';
 import { AdjustmentsPanel } from '../editor/panels/AdjustmentsPanel';
 import { NewDocumentDialog } from '../editor/panels/NewDocumentDialog';
+import { TextEditorModal } from '../editor/panels/TextEditorModal';
 import { AIPanel } from '../editor/ai/AIPanel';
 import { createLayer, get2d } from '../editor/model/document';
-import { exportImage, openProject, saveProject, type ExportFormat } from '../editor/io/fileService';
-import { UI } from '../editor/ui/icons';
+import { addRecent, exportImage, openProject, saveProject, type ExportFormat } from '../editor/io/fileService';
+import { flattenDocument, makeThumbnail } from '../editor/render/Compositor';
+import { AppMenuBar } from '../components/editor/AppMenuBar';
+import { PluginsPanel } from '../components/editor/PluginsPanel';
+import { ShortcutsModal } from '../components/editor/Modals';
+import { serializeDocument, deserializeDocument } from '../editor/io/gefFormat';
+import { API } from '../config/api';
 
 interface EditorPageProps {
   onBack: () => void;
@@ -27,6 +33,7 @@ export function EditorPage({ onBack }: EditorPageProps) {
   const doc = useEditorStore((s) => s.doc);
   const zoom = useEditorStore((s) => s.view.zoom);
   const dirty = useEditorStore((s) => s.dirty);
+  const renderVersion = useEditorStore((s) => s.renderVersion);
   const newDocument = useEditorStore((s) => s.newDocument);
   const renameDocument = useEditorStore((s) => s.renameDocument);
   const addLayer = useEditorStore((s) => s.addLayer);
@@ -37,37 +44,139 @@ export function EditorPage({ onBack }: EditorPageProps) {
   const [tab, setTab] = useState<RightTab>('layers');
   const [showNew, setShowNew] = useState(false);
   const [showAI, setShowAI] = useState(false);
-  const [showExport, setShowExport] = useState(false);
+  const [showPlugins, setShowPlugins] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
   const [busy, setBusy] = useState('');
   const [cursor, setCursorPos] = useState({ x: 0, y: 0 });
   const [editingName, setEditingName] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(288);
   const fileRef = useRef<HTMLInputElement>(null);
+  const dragRef = useRef<{ active: boolean; startX: number; startW: number }>({ active: false, startX: 0, startW: 288 });
+  const [draggingFile, setDraggingFile] = useState(false);
+  const dragCounterRef = useRef(0);
+  const [editingTextLayerId, setEditingTextLayerId] = useState<string | null>(null);
+  const [showRecovery, setShowRecovery] = useState(false);
+  const [recoveryJson, setRecoveryJson] = useState<string | null>(null);
 
   useEditorShortcuts();
 
-  // Belge yoksa varsayılan bir belge oluştur
+  // Belge yoksa varsayılan belge oluştur
   useEffect(() => {
     if (!doc) newDocument({ name: 'Adsız-1', width: 1920, height: 1080, background: 'white' });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Dosya kısayolları (Ctrl+S / Ctrl+Shift+S / Ctrl+O)
+  // Açılışta otomatik kurtarma kontrolü
+  useEffect(() => {
+    const active = localStorage.getItem('mireditor-recovery-active');
+    const backup = localStorage.getItem('mireditor-recovery-backup');
+    if (active === 'true' && backup) {
+      setRecoveryJson(backup);
+      setShowRecovery(true);
+    }
+  }, []);
+
+  // Arka planda otomatik yedekleme (Autosave)
+  useEffect(() => {
+    if (!doc) return;
+    const t = setTimeout(() => {
+      try {
+        const { serializeDocument } = require('../editor/io/gefFormat');
+        const json = serializeDocument(doc);
+        localStorage.setItem('mireditor-recovery-backup', json);
+        localStorage.setItem('mireditor-recovery-active', 'true');
+      } catch (err) {
+        console.error('Autosave error:', err);
+      }
+    }, 6000); // 6 saniye değişiklik yapılmazsa otomatik kaydet
+    return () => clearTimeout(t);
+  }, [doc, renderVersion]);
+
+  // Kaydedildiğinde veya temiz kapatıldığında kurtarmayı pasif et
+  useEffect(() => {
+    const dirtyVal = useEditorStore.getState().dirty;
+    if (!dirtyVal) {
+      localStorage.setItem('mireditor-recovery-active', 'false');
+    }
+  }, [dirty]);
+
+  // Ctrl+S / Ctrl+O / Ctrl+R engel / F1
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!(e.ctrlKey || e.metaKey)) return;
+      const ctrl = e.ctrlKey || e.metaKey;
       const k = e.key.toLowerCase();
-      if (k === 's') {
-        e.preventDefault();
-        handleSave(e.shiftKey);
-      } else if (k === 'o') {
-        e.preventDefault();
-        handleOpenProject();
-      }
+      if (ctrl && (k === 'r' || k === 'w')) { e.preventDefault(); return; }
+      if (ctrl && k === 's') { e.preventDefault(); handleSave(e.shiftKey); return; }
+      if (ctrl && k === 'o') { e.preventDefault(); handleOpenProject(); return; }
+      if (e.key === 'F1') { e.preventDefault(); setShowShortcuts(true); return; }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doc]);
+
+  // Toolbar renk swatchına tıklanınca Renk sekmesine geç
+  useEffect(() => {
+    const colorHandler = () => setTab('color');
+    const tabHandler = (e: Event) => {
+      const tab = (e as CustomEvent).detail as RightTab;
+      if (tab) setTab(tab);
+    };
+    window.addEventListener('mireditor:color-click', colorHandler);
+    window.addEventListener('mireditor:switch-tab', tabHandler);
+    return () => {
+      window.removeEventListener('mireditor:color-click', colorHandler);
+      window.removeEventListener('mireditor:switch-tab', tabHandler);
+    };
+  }, []);
+
+  // Transform modunu etkinleştir
+  useEffect(() => {
+    const handler = () => useEditorStore.getState().setActiveTool('transform');
+    window.addEventListener('mireditor:open-transform', handler);
+    return () => window.removeEventListener('mireditor:open-transform', handler);
+  }, []);
+
+  // Metin düzenleme penceresini aç
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const layerId = (e as CustomEvent).detail?.layerId;
+      if (layerId) setEditingTextLayerId(layerId);
+    };
+    window.addEventListener('mireditor:edit-text', handler);
+    return () => window.removeEventListener('mireditor:edit-text', handler);
+  }, []);
+
+  // Sidebar drag resize
+  const startDrag = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    dragRef.current = { active: true, startX: e.clientX, startW: sidebarWidth };
+    const onMove = (ev: MouseEvent) => {
+      if (!dragRef.current.active) return;
+      const dx = dragRef.current.startX - ev.clientX;
+      const next = Math.max(200, Math.min(520, dragRef.current.startW + dx));
+      setSidebarWidth(next);
+    };
+    const onUp = () => {
+      dragRef.current.active = false;
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }, [sidebarWidth]);
+
+  const handleBack = async () => {
+    if (doc?.filePath) {
+      try {
+        const thumbnail = makeThumbnail(flattenDocument(doc, '#1a1a1a'), 160, 100);
+        await addRecent({ path: doc.filePath, name: doc.name, thumbnail, modified: Date.now(), sizeKb: 0 });
+      } catch { /* yok say */ }
+    }
+    // Temiz kapatma
+    localStorage.setItem('mireditor-recovery-active', 'false');
+    onBack();
+  };
 
   const handleSave = async (saveAs = false) => {
     if (!doc) return;
@@ -93,10 +202,28 @@ export function EditorPage({ onBack }: EditorPageProps) {
 
   const handleExport = async (format: ExportFormat) => {
     if (!doc) return;
-    setShowExport(false);
     setBusy('Dışa aktarılıyor…');
     try {
       await exportImage(doc, format);
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const handleSaveCloud = async () => {
+    if (!doc) return;
+    setBusy('Buluta kaydediliyor…');
+    try {
+      const json = serializeDocument(doc);
+      const authToken = useAuthStore.getState().token;
+      const res = await fetch(API.drafts.save, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}) },
+        body: JSON.stringify({ title: doc.name, data: json }),
+      });
+      if (!res.ok) throw new Error('Kayıt başarısız');
+    } catch (err) {
+      console.error('Cloud save error:', err);
     } finally {
       setBusy('');
     }
@@ -107,13 +234,14 @@ export function EditorPage({ onBack }: EditorPageProps) {
     if (!file || !doc) return;
     const img = new Image();
     img.onload = () => {
-      const layer = createLayer({ name: file.name.replace(/\.[^.]+$/, ''), width: doc.width, height: doc.height });
-      const ctx = get2d(layer.canvas);
-      // Görüntüyü belgeye sığacak şekilde ortala
       const scale = Math.min(doc.width / img.width, doc.height / img.height, 1);
-      const w = img.width * scale;
-      const h = img.height * scale;
-      ctx.drawImage(img, (doc.width - w) / 2, (doc.height - h) / 2, w, h);
+      const w = Math.round(img.width * scale);
+      const h = Math.round(img.height * scale);
+      const layer = createLayer({ name: file.name.replace(/\.[^.]+$/, ''), width: w, height: h });
+      const ctx = get2d(layer.canvas);
+      ctx.drawImage(img, 0, 0, w, h);
+      layer.x = Math.round((doc.width - w) / 2);
+      layer.y = Math.round((doc.height - h) / 2);
       addLayer(layer, true);
       URL.revokeObjectURL(img.src);
     };
@@ -121,86 +249,86 @@ export function EditorPage({ onBack }: EditorPageProps) {
     e.target.value = '';
   };
 
+  const handleDragEnter = (e: React.DragEvent) => {
+    if (e.dataTransfer.types.includes('Files')) {
+      e.preventDefault();
+      dragCounterRef.current++;
+      setDraggingFile(true);
+    }
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    if (e.dataTransfer.types.includes('Files')) {
+      e.preventDefault();
+      dragCounterRef.current--;
+      if (dragCounterRef.current === 0) {
+        setDraggingFile(false);
+      }
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    if (e.dataTransfer.types.includes('Files')) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    dragCounterRef.current = 0;
+    setDraggingFile(false);
+    if (e.dataTransfer.types.includes('Files')) {
+      e.preventDefault();
+      const file = e.dataTransfer.files?.[0];
+      if (file && file.type.startsWith('image/') && doc) {
+        const img = new Image();
+        img.onload = () => {
+          const scale = Math.min(doc.width / img.width, doc.height / img.height, 1);
+          const w = Math.round(img.width * scale);
+          const h = Math.round(img.height * scale);
+          const layer = createLayer({ name: file.name.replace(/\.[^.]+$/, ''), width: w, height: h });
+          const ctx = get2d(layer.canvas);
+          ctx.drawImage(img, 0, 0, w, h);
+          layer.x = Math.round((doc.width - w) / 2);
+          layer.y = Math.round((doc.height - h) / 2);
+          addLayer(layer, true);
+          URL.revokeObjectURL(img.src);
+        };
+        img.src = URL.createObjectURL(file);
+      }
+    }
+  };
+
   return (
-    <div className="w-full h-full flex flex-col bg-[#090909]">
-      {/* TOP BAR */}
-      <div className="h-9 bg-[#0d0d0d] border-b border-[#1a1a1a] flex items-center px-3 gap-2 flex-shrink-0">
-        <button
-          onClick={onBack}
-          className="px-2.5 py-1 rounded text-[10px] text-[#888] hover:text-white hover:bg-[#1a1a1a] uppercase tracking-wider transition-colors"
-        >
-          ← Panel
-        </button>
-        <div className="w-px h-4 bg-[#222]" />
-
-        <TopBtn label="Yeni" onClick={() => setShowNew(true)} />
-        <TopBtn label="Aç" onClick={handleOpenProject} />
-        <TopBtn label="Kaydet" onClick={() => handleSave(false)} />
-        <TopBtn label="Farklı Kaydet" onClick={() => handleSave(true)} />
-        <TopBtn label="Görüntü Ekle" onClick={() => fileRef.current?.click()} />
-        <div className="relative">
-          <TopBtn label="Dışa Aktar ▾" onClick={() => setShowExport((v) => !v)} />
-          {showExport && (
-            <>
-              <div className="fixed inset-0 z-40" onClick={() => setShowExport(false)} />
-              <div className="absolute left-0 top-8 z-50 w-32 bg-[#181818] border border-[#2a2a2a] rounded-lg shadow-2xl shadow-black/60 py-1">
-                {(['png', 'jpeg', 'webp'] as ExportFormat[]).map((f) => (
-                  <button
-                    key={f}
-                    onClick={() => handleExport(f)}
-                    className="w-full text-left px-3 py-1.5 text-[10px] text-[#bbb] hover:bg-[#222] hover:text-white uppercase tracking-wider"
-                  >
-                    {f === 'jpeg' ? 'JPG' : f.toUpperCase()}
-                  </button>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
-        {busy && <span className="text-[9px] text-[#3b82f6] ml-1">{busy}</span>}
-        <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleImportFile} />
-
-        <div className="flex-1 flex items-center justify-center">
-          {editingName ? (
-            <input
-              autoFocus
-              defaultValue={doc?.name ?? ''}
-              onBlur={(e) => {
-                renameDocument(e.target.value || 'Adsız-1');
-                setEditingName(false);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  renameDocument((e.target as HTMLInputElement).value || 'Adsız-1');
-                  setEditingName(false);
-                }
-              }}
-              className="bg-[#141414] border border-[#3b82f6] rounded px-2 py-0.5 text-[11px] text-white text-center outline-none"
-            />
-          ) : (
-            <button
-              onDoubleClick={() => setEditingName(true)}
-              className="text-[11px] text-[#bbb] font-medium tracking-wide"
-              title="Yeniden adlandırmak için çift tıklayın"
-            >
-              {doc?.name ?? 'Adsız'}
-              {dirty && <span className="text-[#3b82f6] ml-1">●</span>}
-              <span className="text-[#555] ml-2">
-                {doc ? `${doc.width}×${doc.height}` : ''} · {Math.round(zoom * 100)}%
-              </span>
-            </button>
-          )}
-        </div>
-
-        <button
-          onClick={() => setShowAI((v) => !v)}
-          className={`flex items-center gap-1.5 px-3 py-1 rounded text-[10px] uppercase tracking-wider font-semibold transition-colors ${
-            showAI ? 'bg-[#3b82f6] text-white' : 'bg-[#3b82f6]/10 text-blue-400 hover:bg-[#3b82f6]/20 border border-[#3b82f6]/30'
-          }`}
-        >
-          {UI.sparkles} AI Stüdyo
-        </button>
-      </div>
+    <div
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
+      className="w-full h-full flex flex-col bg-[#090909]"
+    >
+      {/* PHOTOSHOP STYLE MENU BAR */}
+      <AppMenuBar
+        doc={doc}
+        zoom={zoom}
+        dirty={dirty}
+        onBack={handleBack}
+        onNew={() => setShowNew(true)}
+        onOpen={handleOpenProject}
+        onSave={handleSave}
+        onImport={() => fileRef.current?.click()}
+        onExport={handleExport}
+        onSaveCloud={handleSaveCloud}
+        onToggleAI={() => setShowAI((v) => !v)}
+        showAI={showAI}
+        onShowShortcuts={() => setShowShortcuts(true)}
+        onShowAbout={() => (window as any).__showAboutModal?.()}
+        onShowPlugins={() => setShowPlugins(true)}
+        onEditingNameChange={setEditingName}
+        editingName={editingName}
+        onRename={renameDocument}
+        busy={busy}
+      />
 
       {/* BODY */}
       <div className="flex-1 flex overflow-hidden">
@@ -214,20 +342,25 @@ export function EditorPage({ onBack }: EditorPageProps) {
           </div>
           {/* STATUS BAR */}
           <div className="h-6 bg-[#0d0d0d] border-t border-[#1a1a1a] flex items-center px-4 justify-between flex-shrink-0">
-            <span className="text-[9px] text-[#555] font-mono">
-              X: {cursor.x} Y: {cursor.y}
-            </span>
+            <span className="text-[9px] text-[#555] font-mono">X: {cursor.x}  Y: {cursor.y}</span>
             <span className="text-[9px] text-[#555] font-mono">
               {doc ? `${doc.width} × ${doc.height} px · ${doc.dpi} DPI` : ''}
             </span>
-            <span className="text-[9px] text-[#555] uppercase tracking-wider">
-              {user?.username ?? 'Misafir'}
-            </span>
+            <span className="text-[9px] text-[#555] uppercase tracking-wider">{user?.username ?? 'Misafir'}</span>
           </div>
         </div>
 
-        {/* RIGHT */}
-        <div className="w-72 bg-[#111] border-l border-[#1a1a1a] flex flex-col flex-shrink-0">
+        {/* RIGHT SIDEBAR with resize handle */}
+        <div
+          className="relative bg-[#111] border-l border-[#1a1a1a] flex flex-col flex-shrink-0"
+          style={{ width: sidebarWidth }}
+        >
+          {/* Drag Handle */}
+          <div
+            onMouseDown={startDrag}
+            className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-[#3b82f6]/40 transition-colors z-10"
+          />
+
           {showAI ? (
             <AIPanel onClose={() => setShowAI(false)} />
           ) : (
@@ -268,18 +401,75 @@ export function EditorPage({ onBack }: EditorPageProps) {
         </div>
       </div>
 
-      {showNew && <NewDocumentDialog onClose={() => setShowNew(false)} />}
-    </div>
-  );
-}
+      {/* FILE INPUT */}
+      <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleImportFile} />
 
-function TopBtn({ label, onClick }: { label: string; onClick: () => void }) {
-  return (
-    <button
-      onClick={onClick}
-      className="px-2.5 py-1 rounded text-[10px] text-[#999] hover:text-white hover:bg-[#1a1a1a] uppercase tracking-wider transition-colors"
-    >
-      {label}
-    </button>
+      {/* MODALS */}
+      {showNew && <NewDocumentDialog onClose={() => setShowNew(false)} />}
+      {editingTextLayerId && <TextEditorModal layerId={editingTextLayerId} onClose={() => setEditingTextLayerId(null)} />}
+      {showPlugins && <PluginsPanel onClose={() => setShowPlugins(false)} />}
+      {showShortcuts && <ShortcutsModal onClose={() => setShowShortcuts(false)} />}
+
+      {/* RECOVERY DIALOG */}
+      {showRecovery && (
+        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/60 backdrop-blur-sm animate-fade-in select-none">
+          <div className="w-[380px] bg-[#151515]/95 backdrop-blur border border-[#252525] rounded-xl shadow-2xl p-5 text-white animate-modal-scale text-center">
+            <div className="w-14 h-14 rounded-full bg-yellow-500/10 flex items-center justify-center text-3xl mx-auto mb-3.5 animate-pulse text-yellow-500">
+              ⚠️
+            </div>
+            <h3 className="text-sm font-semibold tracking-wide text-yellow-500 mb-2">Projeniz Beklenmedik Şekilde Kapatıldı</h3>
+            <p className="text-[#aaa] text-xs leading-relaxed mb-5">
+              Uygulama son oturumda beklenmedik bir şekilde sonlandı. Otomatik kurtarma sistemimiz projenizin son durumunu yedekledi. Kurtarılan projeyi geri yüklemek ister misiniz?
+            </p>
+            
+            <div className="flex items-center justify-center gap-3">
+              <button
+                onClick={() => {
+                  localStorage.setItem('mireditor-recovery-active', 'false');
+                  setShowRecovery(false);
+                }}
+                className="px-4 py-2 rounded text-[11px] font-semibold text-[#888] hover:text-white bg-[#1a1a1a] hover:bg-[#222] border border-[#2a2a2a] transition-all uppercase tracking-wider"
+              >
+                Yoksay (Sil)
+              </button>
+              <button
+                onClick={async () => {
+                  if (recoveryJson) {
+                    try {
+                      setBusy('Kurtarılıyor…');
+                      const recoveredDoc = await deserializeDocument(recoveryJson);
+                      setDocument(recoveredDoc);
+                      useEditorStore.setState({ dirty: true });
+                    } catch (e) {
+                      console.error('Recovery failed:', e);
+                    } finally {
+                      setBusy('');
+                    }
+                  }
+                  localStorage.setItem('mireditor-recovery-active', 'false');
+                  setShowRecovery(false);
+                }}
+                className="px-5 py-2 rounded text-[11px] font-semibold bg-yellow-500 text-black hover:bg-yellow-600 shadow-lg shadow-yellow-500/20 transition-all uppercase tracking-wider font-bold"
+              >
+                Projeyi Kurtar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* DRAG OVERLAY */}
+      {draggingFile && (
+        <div className="fixed inset-0 z-[500] flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm border-4 border-dashed border-[#3b82f6]/50 m-4 rounded-2xl pointer-events-none animate-fade-in">
+          <div className="bg-[#151515] border border-[#252525] rounded-2xl p-8 flex flex-col items-center gap-4 shadow-2xl animate-scale-in">
+            <div className="w-16 h-16 rounded-full bg-[#3b82f6]/10 flex items-center justify-center text-3xl animate-bounce">
+              🖼️
+            </div>
+            <p className="text-white text-base font-semibold tracking-wide">Görseli Buraya Bırakın</p>
+            <p className="text-[#666] text-xs">Katman olarak eklemek için dosyayı sürükleyip bırakın</p>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

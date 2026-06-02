@@ -295,3 +295,56 @@ html, body, #root {
     transform: scale(1) translateY(0);
   }
 }
+
+/* ============================================
+   TOOLTIP ANIMATION
+   ============================================ */
+
+.animate-tooltip-in {
+  animation: tooltip-appear 0.15s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes tooltip-appear {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* ============================================
+   LIGHT THEME
+   ============================================ */
+
+[data-theme="light"] {
+  --bg-primary: #f5f5f5;
+  --bg-secondary: #ebebeb;
+  --bg-tertiary: #e0e0e0;
+  --text-primary: #1a1a1a;
+  --text-secondary: #555;
+  --border-color: #d0d0d0;
+  --accent: #3b82f6;
+}
+
+[data-theme="light"] body,
+[data-theme="light"] #root {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+/* ============================================
+   DYNAMIC FONT FAMILY (i18n)
+   ============================================ */
+
+[data-font="noto-jp"] body,
+[data-font="noto-jp"] #root {
+  font-family: 'Noto Sans JP', 'Plus Jakarta Sans', sans-serif;
+}
+
+[data-font="noto-sc"] body,
+[data-font="noto-sc"] #root {
+  font-family: 'Noto Sans SC', 'Plus Jakarta Sans', sans-serif;
+}

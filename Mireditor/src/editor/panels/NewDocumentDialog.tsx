@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useEditorStore } from '../store/useEditorStore';
 import { DOCUMENT_PRESETS } from '../model/types';
 
-export function NewDocumentDialog({ onClose }: { onClose: () => void }) {
+export function NewDocumentDialog({ onClose, onCreated }: { onClose: () => void; onCreated?: () => void }) {
   const newDocument = useEditorStore((s) => s.newDocument);
   const [preset, setPreset] = useState(1);
   const [width, setWidth] = useState(1920);
@@ -30,6 +30,7 @@ export function NewDocumentDialog({ onClose }: { onClose: () => void }) {
       background: bg,
     });
     onClose();
+    onCreated?.();
   };
 
   return (

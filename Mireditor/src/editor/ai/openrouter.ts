@@ -1,6 +1,5 @@
 import type { AIProvider, AISettings, ImageGenOptions } from './types';
-
-const ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
+import { OPENROUTER } from '../../config/api';
 
 interface ORMessageImage {
   type: string;
@@ -31,15 +30,15 @@ export function createOpenRouterProvider(settings: AISettings): AIProvider {
   const headers = () => ({
     'Content-Type': 'application/json',
     Authorization: `Bearer ${settings.apiKey}`,
-    'HTTP-Referer': 'https://mireditor.app',
-    'X-Title': 'Mireditor',
+    'HTTP-Referer': OPENROUTER.referer,
+    'X-Title': OPENROUTER.title,
   });
 
   async function call(messages: any[]): Promise<string> {
     if (!settings.apiKey.trim()) throw new Error('OpenRouter API anahtarı girilmemiş. AI ayarlarından ekleyin.');
     let res: Response;
     try {
-      res = await fetch(ENDPOINT, {
+      res = await fetch(OPENROUTER.endpoint, {
         method: 'POST',
         headers: headers(),
         body: JSON.stringify({ model: settings.imageModel, messages, modalities: ['image', 'text'] }),

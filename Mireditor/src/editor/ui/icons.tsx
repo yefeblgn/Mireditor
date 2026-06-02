@@ -103,6 +103,12 @@ export const ToolIcons: Record<ToolId, React.ReactNode> = {
       <path d="M8 13V6a1.5 1.5 0 013 0v5M11 11V4.5a1.5 1.5 0 013 0V11M14 11V6.5a1.5 1.5 0 013 0V13c0 4-2 7-6 7s-6-2-7-5l-1.5-3a1.5 1.5 0 012.5-1.6L11 13" />
     </Svg>
   ),
+  transform: (
+    <Svg>
+      <rect x="5" y="5" width="14" height="14" rx="1" />
+      <path d="M12 2v3M12 19v3M2 12h3M19 12h3" opacity="0.6" />
+    </Svg>
+  ),
 };
 
 export const TOOL_LABELS: Record<ToolId, string> = {
@@ -121,6 +127,7 @@ export const TOOL_LABELS: Record<ToolId, string> = {
   clone: 'Klon Damgası (S)',
   zoom: 'Yakınlaştır (Z)',
   hand: 'El (H)',
+  transform: 'Serbest Dönüşüm (Ctrl+T)',
 };
 
 // ── Panel / aksiyon ikonları ──

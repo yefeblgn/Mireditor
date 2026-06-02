@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useEditorStore } from '../store/useEditorStore';
 import { makeThumbnail } from '../render/Compositor';
 import { BLEND_MODES, type Layer } from '../model/types';
@@ -145,11 +145,26 @@ function LayerRow({
   onDragEnd: () => void;
   onDropOn: () => void;
 }) {
-  const thumb = useMemo(
-    () => makeThumbnail(layer.canvas, 36, 36),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [layer.id, renderVersion]
-  );
+  const [thumb, setThumb] = useState<string>('');
+
+  useEffect(() => {
+    try {
+      setThumb(makeThumbnail(layer.canvas, 36, 36));
+    } catch (e) {
+      // ignore
+    }
+  }, [layer.id]);
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      try {
+        setThumb(makeThumbnail(layer.canvas, 36, 36));
+      } catch (e) {
+        // ignore
+      }
+    }, 200); // 200ms debounce during dragging/painting
+    return () => clearTimeout(t);
+  }, [layer.id, renderVersion]);
 
   return (
     <div

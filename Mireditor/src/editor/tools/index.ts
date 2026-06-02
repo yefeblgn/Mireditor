@@ -20,6 +20,7 @@ const REGISTRY: Record<ToolId, Tool> = {
   clone: cloneTool,
   zoom: zoomTool,
   hand: handTool,
+  transform: { id: 'transform', cursor: 'default' },
 };
 
 export function getTool(id: ToolId): Tool {

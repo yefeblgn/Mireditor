@@ -138,7 +138,7 @@ function App() {
           <DashboardPage onOpenEditor={handleOpenEditor} />
         )}
         {view === 'editor' && (
-          <EditorPage onBack={handleBackToDashboard} projectConfig={projectConfig || undefined} draftFilePath={draftFilePath || undefined} />
+          <EditorPage onBack={handleBackToDashboard} />
         )}
       </div>
     </div>

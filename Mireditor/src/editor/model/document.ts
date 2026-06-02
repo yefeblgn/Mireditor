@@ -10,7 +10,7 @@ export function createLayerCanvas(width: number, height: number): HTMLCanvasElem
 }
 
 export function get2d(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  const ctx = canvas.getContext('2d');
   if (!ctx) throw new Error('2D context alınamadı');
   return ctx;
 }

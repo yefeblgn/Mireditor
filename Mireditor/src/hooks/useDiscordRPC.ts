@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { useSettingsStore } from '../store/useSettingsStore';
 
 const ipcRenderer = typeof window !== 'undefined' && (window as any).require
   ? (window as any).require('electron').ipcRenderer
@@ -17,9 +18,15 @@ export function useDiscordRPC(state: {
   fileName?: string;
 }) {
   const lastSent = useRef<string>('');
+  const discordRpcEnabled = useSettingsStore((s) => s.discordRpcEnabled);
 
   useEffect(() => {
     if (!ipcRenderer) return;
+
+    // Discord RPC bağlantısını kapa / aç durumunu gönder
+    ipcRenderer.send('discord-rpc-toggle', discordRpcEnabled);
+
+    if (!discordRpcEnabled) return;
 
     // Aynı state tekrar gönderilmesin (performans)
     const key = JSON.stringify(state);
@@ -27,5 +34,6 @@ export function useDiscordRPC(state: {
     lastSent.current = key;
 
     ipcRenderer.send('discord-rpc-update', state);
-  }, [state]);
+  }, [state, discordRpcEnabled]);
 }
+

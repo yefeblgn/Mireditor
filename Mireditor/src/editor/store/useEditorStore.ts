@@ -65,8 +65,8 @@ function restoreSnapshot(snap: Snapshot): MirDocument {
 }
 
 const DEFAULT_TOOL_OPTIONS: ToolOptions = {
-  primaryColor: '#ffffff',
-  secondaryColor: '#000000',
+  primaryColor: '#000000', // Siyah (arka plan beyaz olduğundan)
+  secondaryColor: '#ffffff', // Beyaz (ön plan siyah)
   brushSize: 24,
   brushHardness: 0.8,
   brushOpacity: 1,
@@ -128,6 +128,10 @@ interface EditorState {
   reorderLayer: (id: string, toIndex: number) => void;
   mergeDown: (id: string) => void;
   flattenImage: () => void;
+  rotateLayer: (id: string, angle: 90 | -90 | 180) => void;
+  flipLayer: (id: string, direction: 'horizontal' | 'vertical') => void;
+  transformLayer: (id: string, scaleX: number, scaleY: number, rotateDegrees: number, dx: number, dy: number) => void;
+  cropDocument: (x: number, y: number, w: number, h: number) => void;
 
   // ── Geçmiş ──
   pushHistory: (label?: string) => void;
@@ -149,7 +153,20 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   // ── Belge ──
   newDocument: (opts) => {
     const doc = createDocument(opts);
-    set({ doc, selection: null, past: [], future: [], view: DEFAULT_VIEW, dirty: false, renderVersion: get().renderVersion + 1 });
+    set({
+      doc,
+      selection: null,
+      past: [],
+      future: [],
+      view: DEFAULT_VIEW,
+      dirty: false,
+      renderVersion: get().renderVersion + 1,
+      toolOptions: {
+        ...get().toolOptions,
+        primaryColor: '#000000',
+        secondaryColor: '#ffffff',
+      },
+    });
   },
   setDocument: (doc) =>
     set({ doc, selection: null, past: [], future: [], view: DEFAULT_VIEW, dirty: false, renderVersion: get().renderVersion + 1 }),
@@ -306,6 +323,120 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     ctx.globalCompositeOperation = 'source-over';
     set({ doc: { ...doc, layers: [flat], activeLayerId: flat.id }, dirty: true, renderVersion: get().renderVersion + 1 });
   },
+  rotateLayer: (id, angle) => {
+    const doc = get().doc;
+    if (!doc) return;
+    const layer = doc.layers.find((l) => l.id === id);
+    if (!layer || layer.locked) return;
+    get().pushHistory('Katmanı Döndür');
+
+    const src = layer.canvas;
+    const dest = document.createElement('canvas');
+    const ctx = dest.getContext('2d');
+    if (!ctx) return;
+
+    if (angle === 180) {
+      dest.width = src.width;
+      dest.height = src.height;
+      ctx.translate(dest.width / 2, dest.height / 2);
+      ctx.rotate(Math.PI);
+      ctx.drawImage(src, -src.width / 2, -src.height / 2);
+    } else {
+      dest.width = src.height;
+      dest.height = src.width;
+      ctx.translate(dest.width / 2, dest.height / 2);
+      ctx.rotate((angle * Math.PI) / 180);
+      ctx.drawImage(src, -src.width / 2, -src.height / 2);
+    }
+
+    const layers = doc.layers.map((l) =>
+      l.id === id ? { ...l, type: 'raster' as const, text: undefined, canvas: dest } : l
+    );
+    set({ doc: { ...doc, layers }, renderVersion: get().renderVersion + 1, dirty: true });
+  },
+  flipLayer: (id, direction) => {
+    const doc = get().doc;
+    if (!doc) return;
+    const layer = doc.layers.find((l) => l.id === id);
+    if (!layer || layer.locked) return;
+    get().pushHistory('Katmanı Çevir');
+
+    const src = layer.canvas;
+    const dest = document.createElement('canvas');
+    dest.width = src.width;
+    dest.height = src.height;
+    const ctx = dest.getContext('2d');
+    if (!ctx) return;
+
+    if (direction === 'horizontal') {
+      ctx.translate(dest.width, 0);
+      ctx.scale(-1, 1);
+    } else {
+      ctx.translate(0, dest.height);
+      ctx.scale(1, -1);
+    }
+    ctx.drawImage(src, 0, 0);
+
+    const layers = doc.layers.map((l) =>
+      l.id === id ? { ...l, type: 'raster' as const, text: undefined, canvas: dest } : l
+    );
+    set({ doc: { ...doc, layers }, renderVersion: get().renderVersion + 1, dirty: true });
+  },
+  transformLayer: (id, scaleX, scaleY, rotateDegrees, dx, dy) => {
+    const doc = get().doc;
+    if (!doc) return;
+    const layer = doc.layers.find((l) => l.id === id);
+    if (!layer || layer.locked) return;
+    get().pushHistory('Serbest Dönüşüm');
+
+    const src = layer.canvas;
+    const dest = document.createElement('canvas');
+    
+    const rad = (rotateDegrees * Math.PI) / 180;
+    const sin = Math.abs(Math.sin(rad));
+    const cos = Math.abs(Math.cos(rad));
+    
+    const origW = src.width * (scaleX / 100);
+    const origH = src.height * (scaleY / 100);
+    
+    const newW = Math.max(1, Math.round(origW * cos + origH * sin));
+    const newH = Math.max(1, Math.round(origW * sin + origH * cos));
+    
+    dest.width = newW;
+    dest.height = newH;
+    
+    const ctx = dest.getContext('2d');
+    if (ctx) {
+      ctx.translate(newW / 2, newH / 2);
+      ctx.rotate(rad);
+      ctx.drawImage(src, -origW / 2, -origH / 2, origW, origH);
+    }
+    
+    const layers = doc.layers.map((l) =>
+      l.id === id ? { ...l, type: 'raster' as const, text: undefined, canvas: dest, x: l.x + dx, y: l.y + dy } : l
+    );
+    set({ doc: { ...doc, layers }, renderVersion: get().renderVersion + 1, dirty: true });
+  },
+  cropDocument: (x, y, w, h) => {
+    const doc = get().doc;
+    if (!doc) return;
+    get().pushHistory('Kırp');
+    const layers = doc.layers.map((l) => {
+      const nc = document.createElement('canvas');
+      nc.width = w;
+      nc.height = h;
+      const ctx = nc.getContext('2d');
+      if (ctx) ctx.drawImage(l.canvas, l.x - x, l.y - y);
+      return { ...l, canvas: nc, x: 0, y: 0 };
+    });
+    set({
+      doc: { ...doc, width: w, height: h, layers },
+      renderVersion: get().renderVersion + 1,
+      dirty: true,
+    });
+  },
+
+
 
   // ── Geçmiş ──
   pushHistory: (label = 'Düzenle') => {

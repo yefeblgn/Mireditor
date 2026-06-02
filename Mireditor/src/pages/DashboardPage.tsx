@@ -1,7 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuthStore } from '../store/useAuthStore';
 import { useEditorStore } from '../editor/store/useEditorStore';
+import { useSettingsStore, type Language, type FontSize, type AutoSaveInterval, type ExportFormat } from '../store/useSettingsStore';
 import { listRecents, openProject, openProjectByPath, isElectron, type RecentProject } from '../editor/io/fileService';
+import { NewDocumentDialog } from '../editor/panels/NewDocumentDialog';
+import { TemplatesDialog } from '../editor/panels/TemplatesDialog';
+import { CloudDownloadDialog } from '../editor/panels/CloudDownloadDialog';
 
 interface DashboardPageProps {
   onOpenEditor: () => void;
@@ -73,6 +77,7 @@ const Icons = {
 // ─── Settings Modal ───
 function SettingsModal({ onClose }: { onClose: () => void }) {
   const modalRef = useRef<HTMLDivElement>(null);
+  const s = useSettingsStore();
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -82,30 +87,95 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
     return () => document.removeEventListener('mousedown', handler);
   }, [onClose]);
 
+  const LANGS: { value: Language; label: string }[] = [
+    { value: 'tr', label: 'Türkçe' },
+    { value: 'en', label: 'English' },
+    { value: 'de', label: 'Deutsch' },
+    { value: 'ru', label: 'Русский' },
+    { value: 'ja', label: '日本語' },
+    { value: 'zh', label: '中文' },
+  ];
+
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center animate-modal-in">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
-      <div ref={modalRef} className="relative w-[520px] max-h-[70vh] bg-[#151515] border border-[#252525] rounded-xl shadow-2xl shadow-black/60 overflow-hidden animate-modal-scale">
+      <div ref={modalRef} className="relative w-[540px] max-h-[75vh] bg-[#151515] border border-[#252525] rounded-xl shadow-2xl shadow-black/60 overflow-hidden flex flex-col animate-modal-scale">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-[#222]">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-[#222] flex-shrink-0">
           <h2 className="text-white text-sm font-semibold tracking-wide">Ayarlar</h2>
           <button onClick={onClose} className="text-[#555] hover:text-white transition-colors">{Icons.close}</button>
         </div>
         {/* Content */}
-        <div className="p-6 space-y-5 overflow-y-auto max-h-[55vh]">
+        <div className="p-6 space-y-6 overflow-y-auto flex-1">
+
+          {/* Görünüm */}
           <SettingGroup title="Görünüm">
-            <SettingRow label="Tema" value="Koyu" />
-            <SettingRow label="Dil" value="Türkçe" />
-            <SettingRow label="Font Boyutu" value="14px" />
+            {/* Tema */}
+            <SettingRowControl label="Tema">
+              <div className="flex gap-1">
+                {(['dark', 'light'] as const).map((t) => (
+                  <button key={t}
+                    onClick={() => s.setTheme(t)}
+                    className={`px-3 py-1 rounded text-[11px] font-medium transition-colors ${s.theme === t ? 'bg-[#3b82f6] text-white' : 'bg-[#222] text-[#888] hover:text-white'}`}>
+                    {t === 'dark' ? 'Koyu' : 'Açık'}
+                  </button>
+                ))}
+              </div>
+            </SettingRowControl>
+            {/* Dil */}
+            <SettingRowControl label="Dil">
+              <select
+                value={s.language}
+                onChange={(e) => s.setLanguage(e.target.value as Language)}
+                className="bg-[#222] border border-[#333] text-[#ccc] text-[11px] rounded px-2 py-1 outline-none focus:border-[#3b82f6]">
+                {LANGS.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
+              </select>
+            </SettingRowControl>
+            {/* Font Boyutu */}
+            <SettingRowControl label="Arayüz Font Boyutu">
+              <div className="flex gap-1">
+                {([12, 14, 16] as FontSize[]).map((sz) => (
+                  <button key={sz}
+                    onClick={() => s.setFontSize(sz)}
+                    className={`px-3 py-1 rounded text-[11px] font-medium transition-colors ${s.fontSize === sz ? 'bg-[#3b82f6] text-white' : 'bg-[#222] text-[#888] hover:text-white'}`}>
+                    {sz}px
+                  </button>
+                ))}
+              </div>
+            </SettingRowControl>
           </SettingGroup>
+
+          {/* Dışa Aktarma */}
           <SettingGroup title="Dışa Aktarma">
-            <SettingRow label="Varsayılan Format" value="PNG" />
-            <SettingRow label="Kalite" value="Yüksek" />
+            <SettingRowControl label="Varsayılan Format">
+              <div className="flex gap-1">
+                {(['png', 'jpeg', 'webp'] as ExportFormat[]).map((f) => (
+                  <button key={f}
+                    onClick={() => s.setDefaultExportFormat(f)}
+                    className={`px-3 py-1 rounded text-[11px] font-medium uppercase transition-colors ${s.defaultExportFormat === f ? 'bg-[#3b82f6] text-white' : 'bg-[#222] text-[#888] hover:text-white'}`}>
+                    {f === 'jpeg' ? 'JPG' : f}
+                  </button>
+                ))}
+              </div>
+            </SettingRowControl>
           </SettingGroup>
+
+          {/* Gelişmiş */}
           <SettingGroup title="Gelişmiş">
-            <SettingRow label="GPU Hızlandırma" value="Açık" />
-            <SettingRow label="Otomatik Kayıt" value="30 saniye" />
+            {/* Otomatik Kayıt */}
+            <SettingRowControl label="Otomatik Kayıt">
+              <select
+                value={s.autoSaveInterval}
+                onChange={(e) => s.setAutoSaveInterval(Number(e.target.value) as AutoSaveInterval)}
+                className="bg-[#222] border border-[#333] text-[#ccc] text-[11px] rounded px-2 py-1 outline-none focus:border-[#3b82f6]">
+                <option value={0}>Kapalı</option>
+                <option value={30}>30 saniye</option>
+                <option value={60}>1 dakika</option>
+                <option value={120}>2 dakika</option>
+              </select>
+            </SettingRowControl>
           </SettingGroup>
+
         </div>
       </div>
     </div>
@@ -115,18 +185,29 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
 function SettingGroup({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div>
-      <h3 className="text-[#666] text-[10px] font-bold uppercase tracking-[2px] mb-3">{title}</h3>
-      <div className="space-y-1">{children}</div>
+      <h3 className="text-[#555] text-[9px] font-bold uppercase tracking-[2.5px] mb-2">{title}</h3>
+      <div className="space-y-1 bg-[#1a1a1a] rounded-lg overflow-hidden">{children}</div>
     </div>
   );
 }
 
-function SettingRow({ label, value }: { label: string; value: string }) {
+function SettingRowControl({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="flex items-center justify-between py-2.5 px-3 rounded-lg hover:bg-[#1a1a1a] transition-colors">
-      <span className="text-[#ccc] text-xs">{label}</span>
-      <span className="text-[#555] text-xs">{value}</span>
+    <div className="flex items-center justify-between py-3 px-4 border-b border-[#222] last:border-b-0">
+      <span className="text-[#bbb] text-xs">{label}</span>
+      {children}
     </div>
+  );
+}
+
+function Toggle({ enabled, onToggle }: { enabled: boolean; onToggle: () => void }) {
+  return (
+    <button
+      onClick={onToggle}
+      className={`relative w-9 h-5 rounded-full transition-colors ${enabled ? 'bg-[#3b82f6]' : 'bg-[#333]'}`}
+    >
+      <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${enabled ? 'translate-x-4' : 'translate-x-0'}`} />
+    </button>
   );
 }
 
@@ -195,6 +276,9 @@ export function DashboardPage({ onOpenEditor }: DashboardPageProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [showSettings, setShowSettings] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
+  const [showNewDoc, setShowNewDoc] = useState(false);
+  const [showTemplates, setShowTemplates] = useState(false);
+  const [showCloud, setShowCloud] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   // Click outside → menü kapat
@@ -250,8 +334,7 @@ export function DashboardPage({ onOpenEditor }: DashboardPageProps) {
   };
 
   const handleNewProject = () => {
-    useEditorStore.getState().closeDocument();
-    onOpenEditor();
+    setShowNewDoc(true);
   };
 
   const filteredProjects = projects.filter((p) =>
@@ -263,6 +346,18 @@ export function DashboardPage({ onOpenEditor }: DashboardPageProps) {
       {/* Modals */}
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
       {showProfile && <ProfileModal onClose={() => setShowProfile(false)} user={user} />}
+      {showNewDoc && (
+        <NewDocumentDialog
+          onClose={() => setShowNewDoc(false)}
+          onCreated={() => onOpenEditor()}
+        />
+      )}
+      {showTemplates && (
+        <TemplatesDialog onClose={() => setShowTemplates(false)} onCreated={() => onOpenEditor()} />
+      )}
+      {showCloud && (
+        <CloudDownloadDialog onClose={() => setShowCloud(false)} onOpened={() => onOpenEditor()} />
+      )}
 
       {/* LEFT SIDE - Son Projeler */}
       <div className="flex-1 flex flex-col overflow-hidden">
@@ -391,8 +486,8 @@ export function DashboardPage({ onOpenEditor }: DashboardPageProps) {
         <div className="space-y-1.5">
           <SideButton icon={Icons.newFile} label="Yeni Proje" desc="Boş bir canvas oluştur" primary onClick={handleNewProject} />
           <SideButton icon={Icons.folder} label="Proje Aç" desc="Diskten .gef dosyası aç" onClick={handleOpenFile} />
-          <SideButton icon={Icons.template} label="Şablondan Oluştur" desc="Hazır şablonlardan başla" onClick={() => {}} />
-          <SideButton icon={Icons.cloud} label="Buluttan İndir" desc="Cloud projelerini senkronla" onClick={() => {}} />
+          <SideButton icon={Icons.template} label="Şablondan Oluştur" desc="Hazır şablonlardan başla" onClick={() => setShowTemplates(true)} />
+          <SideButton icon={Icons.cloud} label="Buluttan İndir" desc="Cloud projelerini senkronla" onClick={() => setShowCloud(true)} />
         </div>
 
         <p className="text-[#666] text-[10px] font-bold uppercase tracking-[2px] mt-6 mb-4">Öğren</p>

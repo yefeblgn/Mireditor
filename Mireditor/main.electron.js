@@ -320,6 +320,42 @@ function createMainWindow() {
 
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 
+  // Renderer çökme (siyah ekran stuck) kurtarma sistemi
+  mainWindow.webContents.on('render-process-gone', (event, details) => {
+    console.error('Renderer process gone:', details);
+    dialog.showMessageBoxSync(mainWindow, {
+      type: 'error',
+      title: 'Mireditor Çöktü',
+      message: 'Uygulama beklenmedik bir şekilde kapandı. Projeniz otomatik kurtarma sistemi tarafından yedeklendi.',
+      buttons: ['Tamam']
+    });
+    app.relaunch();
+    app.exit(0);
+  });
+
+  // Renderer kilitlenme kurtarma sistemi
+  mainWindow.webContents.on('unresponsive', () => {
+    console.warn('Renderer process unresponsive');
+    const choice = dialog.showMessageBoxSync(mainWindow, {
+      type: 'warning',
+      title: 'Uygulama Yanıt Vermiyor',
+      message: 'Uygulama yanıt vermiyor. Kapatıp yeniden başlatmak ister misiniz?',
+      buttons: ['Yeniden Başlat', 'Bekle']
+    });
+    if (choice === 0) {
+      app.relaunch();
+      app.exit(0);
+    }
+  });
+
+  // Ctrl+R (yenileme) ve Ctrl+W (sekme kapat) engelle
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    const key = input.key.toLowerCase();
+    if ((input.control || input.meta) && (key === 'r' || key === 'w')) {
+      event.preventDefault();
+    }
+  });
+
   // IPC: Pencere kontrolleri
   ipcMain.on('window-minimize', () => mainWindow?.minimize());
   ipcMain.on('window-maximize', () => {
@@ -437,6 +473,23 @@ function createMainWindow() {
   ipcMain.on('discord-rpc-update', (_event, state) => {
     if (discordRPC) {
       discordRPC.setState(state);
+    }
+  });
+
+  // IPC: Discord RPC toggle (connect / destroy connection based on plugins status)
+  ipcMain.on('discord-rpc-toggle', async (_event, enabled) => {
+    if (enabled) {
+      if (!discordRPC) {
+        discordRPC = new DiscordRPCManager();
+        await discordRPC.connect();
+      } else if (!discordRPC.connected && !discordRPC.destroyed) {
+        await discordRPC.connect();
+      }
+    } else {
+      if (discordRPC) {
+        await discordRPC.destroy();
+        discordRPC = null;
+      }
     }
   });
 

@@ -74,12 +74,17 @@ export async function deserializeDocument(json: string): Promise<MirDocument> {
 
   const layers: Layer[] = [];
   for (const sl of data.layers) {
-    const canvas = createLayerCanvas(data.width, data.height);
+    let img: HTMLImageElement | null = null;
     try {
-      const img = await loadImage(sl.data);
-      get2d(canvas).drawImage(img, 0, 0);
+      img = await loadImage(sl.data);
     } catch {
       /* boş katman olarak bırak */
+    }
+    const canvasW = img ? img.width : data.width;
+    const canvasH = img ? img.height : data.height;
+    const canvas = createLayerCanvas(canvasW, canvasH);
+    if (img) {
+      get2d(canvas).drawImage(img, 0, 0);
     }
     layers.push({
       id: sl.id || uid('layer'),

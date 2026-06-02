@@ -55,6 +55,8 @@ export interface TextData {
   bold: boolean;
   italic: boolean;
   align: 'left' | 'center' | 'right';
+  letterSpacing?: number;
+  curve?: number;
 }
 
 export interface Layer {
@@ -108,7 +110,8 @@ export type ToolId =
   | 'gradient'
   | 'clone'
   | 'zoom'
-  | 'hand';
+  | 'hand'
+  | 'transform';
 
 export type ShapeKind = 'rect' | 'ellipse' | 'line';
 

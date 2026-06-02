@@ -44,6 +44,9 @@ export function ToolOptionsBar() {
   const tool = useEditorStore((s) => s.activeTool);
   const o = useEditorStore((s) => s.toolOptions);
   const set = useEditorStore((s) => s.setToolOption);
+  const selection = useEditorStore((s) => s.selection);
+  const cropDocument = useEditorStore((s) => s.cropDocument);
+  const setSelection = useEditorStore((s) => s.setSelection);
 
   const isPaint = tool === 'brush' || tool === 'pencil' || tool === 'eraser';
 
@@ -111,6 +114,60 @@ export function ToolOptionsBar() {
 
       {tool === 'text' && (
         <Slider label="Punto" value={o.fontSize} min={8} max={300} suffix="px" onChange={(v) => set({ fontSize: v })} />
+      )}
+
+      {tool === 'crop' && (
+        <div className="flex items-center gap-3">
+          <span className="text-[10px] text-[#555]">Kırpılacak alanı seçin.</span>
+          {selection && (
+            <div className="flex items-center gap-1.5 ml-2">
+              <button
+                onClick={() => {
+                  cropDocument(
+                    Math.round(selection.x),
+                    Math.round(selection.y),
+                    Math.round(selection.width),
+                    Math.round(selection.height)
+                  );
+                  setSelection(null);
+                }}
+                className="bg-green-600 hover:bg-green-700 text-white text-[10px] font-semibold px-2.5 py-1 rounded transition-colors uppercase tracking-wider"
+              >
+                Onayla (Enter)
+              </button>
+              <button
+                onClick={() => setSelection(null)}
+                className="bg-red-600 hover:bg-red-700 text-white text-[10px] font-semibold px-2.5 py-1 rounded transition-colors uppercase tracking-wider"
+              >
+                İptal (Esc)
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {tool === 'transform' && (
+        <div className="flex items-center gap-3">
+          <span className="text-[10px] text-[#555]">Görseli köşelerden boyutlandırıp döndürün (Oransız ölçek için Shift'e basın).</span>
+          <div className="flex items-center gap-1.5 ml-2">
+            <button
+              onClick={() => {
+                window.dispatchEvent(new CustomEvent('mireditor:apply-transform'));
+              }}
+              className="bg-green-600 hover:bg-green-700 text-white text-[10px] font-semibold px-2.5 py-1 rounded transition-colors uppercase tracking-wider"
+            >
+              Onayla (Enter)
+            </button>
+            <button
+              onClick={() => {
+                window.dispatchEvent(new CustomEvent('mireditor:cancel-transform'));
+              }}
+              className="bg-red-600 hover:bg-red-700 text-white text-[10px] font-semibold px-2.5 py-1 rounded transition-colors uppercase tracking-wider"
+            >
+              İptal (Esc)
+            </button>
+          </div>
+        </div>
       )}
 
       {(tool === 'clone' || tool === 'gradient') && (

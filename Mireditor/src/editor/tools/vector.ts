@@ -165,11 +165,14 @@ export const textTool: Tool = {
     const doc = st.doc;
     if (!doc) return;
     const o = st.toolOptions;
+    
     const layer = createLayer({ name: 'Metin', type: 'text', width: doc.width, height: doc.height });
     layer.text = defaultTextData(o.primaryColor, o.fontFamily, o.fontSize);
+    
     layer.x = Math.round(p.x);
     layer.y = Math.round(p.y);
     renderTextLayer(layer);
+    st.pushHistory('Metin ekle');
     st.addLayer(layer, true);
   },
 };
@@ -199,38 +202,13 @@ export const cropTool: Tool = {
   },
   onUp(p: PointerInfo) {
     cropDrag.active = false;
-    const x = Math.round(Math.min(cropDrag.startX, p.x));
-    const y = Math.round(Math.min(cropDrag.startY, p.y));
-    const w = Math.round(Math.abs(p.x - cropDrag.startX));
-    const h = Math.round(Math.abs(p.y - cropDrag.startY));
-    if (w < 5 || h < 5) {
-      useEditorStore.getState().setSelection(null);
-      return;
+    const st = useEditorStore.getState();
+    const sel = st.selection;
+    if (sel && (sel.width < 5 || sel.height < 5)) {
+      st.setSelection(null);
     }
-    applyCrop(x, y, w, h);
-    useEditorStore.getState().setSelection(null);
   },
 };
-
-function applyCrop(x: number, y: number, w: number, h: number) {
-  const st = useEditorStore.getState();
-  const doc = st.doc;
-  if (!doc) return;
-  st.pushHistory('Kırp');
-  const layers = doc.layers.map((l) => {
-    const nc = document.createElement('canvas');
-    nc.width = w;
-    nc.height = h;
-    const ctx = nc.getContext('2d');
-    if (ctx) ctx.drawImage(l.canvas, l.x - x, l.y - y);
-    return { ...l, canvas: nc, x: 0, y: 0 };
-  });
-  useEditorStore.setState({
-    doc: { ...doc, width: w, height: h, layers },
-    renderVersion: st.renderVersion + 1,
-    dirty: true,
-  });
-}
 
 // ─── Klon damgası (Clone stamp) ───
 const cloneState = { active: false, hasSource: false, srcX: 0, srcY: 0, offX: 0, offY: 0 };

@@ -18,7 +18,7 @@ export function NavigatorPanel() {
       } catch {
         /* yok say */
       }
-    }, 120);
+    }, 300);
     return () => clearTimeout(t);
   }, [doc, renderVersion]);
 

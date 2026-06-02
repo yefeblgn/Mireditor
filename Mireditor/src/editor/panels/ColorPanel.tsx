@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useEditorStore } from '../store/useEditorStore';
 import { hexToRgb, hsvToRgb, rgbToHex, rgbToHsv } from '../utils/color';
 
@@ -14,6 +14,15 @@ export function ColorPanel() {
   const setToolOption = useEditorStore((s) => s.setToolOption);
   const [target, setTarget] = useState<'primary' | 'secondary'>('primary');
   const svRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const which = (e as CustomEvent).detail?.which;
+      if (which === 'primary' || which === 'secondary') setTarget(which);
+    };
+    window.addEventListener('mireditor:color-click', handler);
+    return () => window.removeEventListener('mireditor:color-click', handler);
+  }, []);
   const hueRef = useRef<HTMLDivElement>(null);
 
   const current = target === 'primary' ? options.primaryColor : options.secondaryColor;

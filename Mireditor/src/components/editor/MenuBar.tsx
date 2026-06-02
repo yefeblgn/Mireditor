@@ -242,7 +242,8 @@ export function EditorMenuBar({ onBack }: { onBack: () => void }) {
       }
 
       const axios = (await import('axios')).default;
-      await axios.post('https://manici.yefeblgn.net/mireditor/api/drafts/save', {
+      const { API } = await import('../../config/api');
+      await axios.post(API.drafts.save, {
         title: store.projectTitle,
         data: JSON.stringify(draftData),
       }, {

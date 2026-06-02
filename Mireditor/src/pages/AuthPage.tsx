@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { useAuthStore } from '../store/useAuthStore';
-
-const API_URL = 'https://manici.yefeblgn.net/mireditor/api';
+import { API } from '../config/api';
 
 interface AuthPageProps {
   onSuccess: () => void;
@@ -107,7 +106,7 @@ export function AuthPage({ onSuccess }: AuthPageProps) {
     setError('');
 
     try {
-      const res = await axios.post(`${API_URL}/login`, {
+      const res = await axios.post(API.auth.login, {
         username: username.trim(),
         password: password.trim(),
       });
@@ -172,7 +171,7 @@ export function AuthPage({ onSuccess }: AuthPageProps) {
     setError('');
 
     try {
-      await axios.post(`${API_URL}/register`, {
+      await axios.post(API.auth.register, {
         username: fullName.trim(),
         email: email.trim(),
         password: password.trim(),
@@ -329,6 +328,20 @@ export function AuthPage({ onSuccess }: AuthPageProps) {
                       </span>
                     )}
                   </p>
+                  {/* Çevrimdışı Moda Geçiş Butonu (network hatası için) */}
+                  {error.includes('Sunucuya bağlanılamadı') && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setToken('offline-mode');
+                        setUser({ id: 0, username: 'Çevrimdışı Kullanıcı', email: '' });
+                        onSuccess();
+                      }}
+                      className="mt-3 w-full px-3 py-2 bg-amber-900/20 border border-amber-700/40 rounded text-amber-400 text-[10px] uppercase font-semibold hover:bg-amber-900/30 transition-colors"
+                    >
+                      Çevrimdışı Modda Devam Et
+                    </button>
+                  )}
                 </div>
               </div>
             )}
