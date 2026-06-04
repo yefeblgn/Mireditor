@@ -214,18 +214,24 @@ export function EditorPage({ onBack }: EditorPageProps) {
     if (!doc) return;
     setBusy('Buluta kaydediliyor…');
     try {
-      const json = serializeDocument(doc);
       const authToken = useAuthStore.getState().token;
+      if (!authToken) throw new Error('Giriş yapmanız gerekiyor');
+      const json = serializeDocument(doc);
       const res = await fetch(API.drafts.save, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}) },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${authToken}` },
         body: JSON.stringify({ title: doc.name, data: json }),
       });
-      if (!res.ok) throw new Error('Kayıt başarısız');
-    } catch (err) {
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.detail || body.message || `Sunucu hatası (${res.status})`);
+      }
+      setBusy('✓ Buluta kaydedildi');
+      setTimeout(() => setBusy(''), 3000);
+    } catch (err: any) {
       console.error('Cloud save error:', err);
-    } finally {
-      setBusy('');
+      setBusy(`✗ ${err.message || 'Kayıt başarısız'}`);
+      setTimeout(() => setBusy(''), 4000);
     }
   };
 
