@@ -499,8 +499,8 @@ export function DashboardPage({ onOpenEditor }: DashboardPageProps) {
 
         <div className="mt-auto pt-6">
           <div className="text-[#2a2a2a] text-[9px] uppercase tracking-[2px]">
-            <p>Mireditor v0.0.1</p>
-            <p className="mt-0.5">Build 20260305</p>
+            <p>Mireditor v0.2.1</p>
+            <p className="mt-0.5">Build 20260406</p>
           </div>
         </div>
       </div>
