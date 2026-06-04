@@ -28,7 +28,7 @@ function ensureFirewallRule() {
 
 // ─── Config ───
 const VITE_URL = 'http://localhost:5173';
-const API_URL = app.isPackaged ? 'https://manici.yefeblgn.net/mireditor/api' : 'http://localhost:3000/api';
+const API_URL = app.isPackaged ? 'https://api.yefeblgn.net/mireditor/v1' : 'http://localhost:3000/api';
 const RETRY_DELAYS = [4, 8, 12, 16, 20, 24, 28, 32, 36]; // saniye
 const APP_VERSION = '0.0.1';
 
